@@ -1,0 +1,30 @@
+# Build directories
+/build/
+/out/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/Makefile
+
+# Compiled objects
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.pdb
+*.log
+
+# IDE / editor
+/.vs/
+/.vscode/
+*.user
+*.suo
+*.idea/
+
+# CMake temp deps
+/_deps/
+
+# OS junk
+.DS_Store
+*.swp
