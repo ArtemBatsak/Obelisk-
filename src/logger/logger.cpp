@@ -1,13 +1,12 @@
-#include "logger/logger.h"
+п»ї#include "logger.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/rotating_file_sink.h>
-#include <filesystem>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 
 void init_logging()
 {
-    // защита от повторной инициализации
+    // Р·Р°С‰РёС‚Р° РѕС‚ РїРѕРІС‚РѕСЂРЅРѕР№ РёРЅРёС†РёР°Р»РёР·Р°С†РёРё
     if (spdlog::get("obelisk"))
         return;
 
@@ -20,7 +19,7 @@ void init_logging()
     constexpr std::size_t max_file_size = 5 * 1024 * 1024;
     constexpr std::size_t max_files = 5;
 
-    // --- создаём sinks ---
+    // --- СЃРѕР·РґР°С‘Рј sinks ---
     auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
         log_file.string(), max_file_size, max_files
     );

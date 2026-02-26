@@ -1,10 +1,10 @@
-#pragma once
+п»ї#pragma once
 #include "manager/Data.h"
 
 
-#include <asio.hpp>                // Основной ASIO (асинхронные сокеты, таймеры)
-#include <asio/ts/internet.hpp>    // TCP-сокеты и endpoint
-#include <asio/ts/buffer.hpp>      // Буферы для async_read/write
+#include <asio.hpp>                // РћСЃРЅРѕРІРЅРѕР№ ASIO (Р°СЃРёРЅС…СЂРѕРЅРЅС‹Рµ СЃРѕРєРµС‚С‹, С‚Р°Р№РјРµСЂС‹)
+#include <asio/ts/internet.hpp>    // TCP-СЃРѕРєРµС‚С‹ Рё endpoint
+#include <asio/ts/buffer.hpp>      // Р‘СѓС„РµСЂС‹ РґР»СЏ async_read/write
 #include <asio/ts/io_context.hpp>  // io_context
 #include <asio/steady_timer.hpp>
 
@@ -77,7 +77,12 @@ private:
 	asio::steady_timer pong_timer;
 	asio::steady_timer data_pool_timer;
 
-    
+    using Clock = std::chrono::steady_clock;
+
+    Clock::time_point last_ping_start_;          
+    std::chrono::milliseconds last_ping_ms_{ 0 };
+    std::atomic<uint32_t> last_ping_ms{ 0 };
+
     int ping_interval_sec;
     int ping_timeout_sec;
     std::shared_ptr<ssl_socket> control_socket;
@@ -85,10 +90,14 @@ private:
     std::mutex link_pool_mutex;
     std::mutex data_pool_mutex;
     std::mutex client_pool_mutex;
-    asio::io_context& io_context_;
+    asio::any_io_executor io_context_;
     static constexpr std::size_t BuffSize = 4096;
-    std::array<char, 4> pong_buf{};
+    // Buffer sized to full control Packet to avoid leaving partial packet bytes in the stream
+    std::array<char, sizeof(Packet)> pong_buf{};
     std::size_t pong_bytes = 0;
+
+    // Flag to prevent multiple concurrent wait-for-pong operations
+    std::atomic<bool> waiting_for_pong{ false };
 
     std::weak_ptr<ServerManager> manager_;
 
@@ -114,12 +123,12 @@ private:
     void remove_all_pairs();
     
     void send_control_packet(uint32_t type, uint32_t value, std::function<void(const asio::error_code&)> handler = nullptr);
-   
+    
 
 public:
     GrayServer(int server_id,
         std::shared_ptr<ssl_socket> control_sock,
-        asio::io_context& io,
+        asio::any_io_executor io,
         int data_port,
         int client_port,
         int pool_size,
@@ -148,5 +157,13 @@ public:
 		schedule_ping();    
 	}
     uint32_t get_id() const { return id; }
+    uint32_t get_ping() const { return last_ping_ms.load(); }
+	uint32_t get_active_pairs() {
+		std::lock_guard<std::mutex> lock(link_pool_mutex);
+		return static_cast<uint32_t>(link_pool.size());
+	}
     void shutdown();
 };
+
+
+

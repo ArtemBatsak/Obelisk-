@@ -1,0 +1,12 @@
+{
+  "name": "obelisk",
+  "version": "1.0.0",
+  "builtin-baseline": "0b71e2bc94849e6b05ee3cee74ed86f8835916d6",
+  "dependencies": [
+    "spdlog",
+    "asio",
+    "openssl",
+    "cpp-httplib",
+    "nlohmann-json"
+  ]
+}

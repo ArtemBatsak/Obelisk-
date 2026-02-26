@@ -1,4 +1,4 @@
-#include "Server_class.h"
+п»ї#include "Server_class.h"
 #include "logger/logger.h"
 
 void GrayServer::init_acceptor(int data_port, int client_port) {
@@ -24,7 +24,13 @@ void GrayServer::async_accept_data() {
             {
                 self->handle_new_data(sock);
             }
-           // self->async_accept_data();
+            else
+            {
+                // Р›РѕРіРёСЂРѕРІР°С‚СЊ С‚РѕР»СЊРєРѕ РѕС‚РєР»РѕРЅРµРЅРёСЏ РѕС‚ РЅРѕСЂРјС‹
+                if (ec != asio::error::operation_aborted) {
+                    spdlog::error("Server {}: error accepting data connection (code {}): {}", self->id, ec.value(), ec.message());
+                }
+            }
         });
 }
 
@@ -37,7 +43,7 @@ void GrayServer::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock) {
         [this, self, sock, buf](const asio::error_code& ec, std::size_t bytes_read) {
             if (!self->alive) return;
             if (ec || bytes_read != sizeof(uint32_t)) {
-                // Логировать только отклонения от нормы
+                // Р›РѕРіРёСЂРѕРІР°С‚СЊ С‚РѕР»СЊРєРѕ РѕС‚РєР»РѕРЅРµРЅРёСЏ РѕС‚ РЅРѕСЂРјС‹
                 if (ec && ec != asio::error::eof) {
                     spdlog::error("Server {}: error reading OTP from data socket (code {}): {}", id, ec.value(), ec.message());
                 }
@@ -90,7 +96,7 @@ void GrayServer::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock) {
             asio::error_code ka_ec;
             sock->set_option(asio::socket_base::keep_alive(true), ka_ec);
             if (ka_ec) {
-                // Логирование ошибки установки keepalive
+                // Р›РѕРіРёСЂРѕРІР°РЅРёРµ РѕС€РёР±РєРё СѓСЃС‚Р°РЅРѕРІРєРё keepalive
                 spdlog::error("Server {}: failed to set keepalive on data socket (code {}): {}", id, ka_ec.value(), ka_ec.message());
             }
 
@@ -144,7 +150,7 @@ void GrayServer::check_data_pool() {
 		
         send_control_packet(2, current_otp, [self](const asio::error_code& ec) {
             if (ec) {
-                // Ошибка отправки контрольного пакета — логируем
+                // РћС€РёР±РєР° РѕС‚РїСЂР°РІРєРё РєРѕРЅС‚СЂРѕР»СЊРЅРѕРіРѕ РїР°РєРµС‚Р° вЂ” Р»РѕРіРёСЂСѓРµРј
                 spdlog::error("Server {}: failed to send OTP control packet (code {}): {}", self->id, ec.value(), ec.message());
             }
             self->check_in_progress = false;
@@ -248,103 +254,104 @@ void GrayServer::shutdown()
 
 void GrayServer::send_ping() {
     auto self = shared_from_this();
-    if (!self->alive || !control_socket || !control_socket->lowest_layer().is_open()) return;
+    if (!self->alive || !control_socket || !control_socket->lowest_layer().is_open())
+        return;
+
+    // If we're already waiting for a pong, don't send another ping
+    bool expected = false;
+    if (!self->waiting_for_pong.compare_exchange_strong(expected, true)) {
+        spdlog::warn("Server {}: send_ping skipped because a pong is already awaited", self->id);
+        return; 
+    }
 
     send_control_packet(1, 0, [self](const asio::error_code& ec) {
         if (ec) {
             spdlog::error("Server {}: send_ping failed (code {}): {}", self->id, ec.value(), ec.message());
+            self->waiting_for_pong = false;
             self->shutdown();
             return;
         }
-		
-        //spdlog::info("Server {}: sending ping", self->id);
+        self->last_ping_start_ = Clock::now();
+       
+        // Start waiting for pong (async read + timeout)
         self->wait_pong();
-
         });
 }
 
-/*void GrayServer::wait_pong() {
+void GrayServer::wait_pong() {
     auto self = shared_from_this();
-    if (!self->alive || !control_socket || !control_socket->lowest_layer().is_open()) return;
-
-    auto buf = std::make_shared<std::array<char, 4>>();
-
-    pong_timer.expires_after(std::chrono::seconds(ping_timeout_sec));
-    pong_timer.async_wait([self](const asio::error_code& ec) {
-        if (ec == asio::error::operation_aborted) return;
-        if (!self->alive) return;
-        self->shutdown();
-        });
-
-    asio::async_read(*control_socket,
-        asio::buffer(*buf),
-        [self, buf](const asio::error_code& ec, std::size_t bytes_read) {
-            self->pong_timer.cancel();
-            if (!self->alive) return;
-            if (ec || bytes_read != 4) {
-                if (ec && ec != asio::error::eof) {
-                    spdlog::error("Server {}: wait_pong read error (code {}): {}", self->id, ec.value(), ec.message());
-                }
-                self->shutdown();
-                return;
-            }
-
-            self->schedule_ping();
-        });
-}*/
-void GrayServer::wait_pong()
-{
-    auto self = shared_from_this();
-    if (!alive || !control_socket || !control_socket->lowest_layer().is_open())
+    if (!self->alive || !self->control_socket || !self->control_socket->lowest_layer().is_open())
         return;
 
-    pong_bytes = 0;
-
-    // 1. Таймер, который РЕАЛЬНО рвёт сокет
-    pong_timer.expires_after(std::chrono::seconds(ping_timeout_sec));
-    pong_timer.async_wait([self](const asio::error_code& ec) {
+    // Cancel any previous pong timeout and start a fresh one
+    self->pong_timer.cancel();  
+    self->pong_timer.expires_after(std::chrono::seconds(self->ping_timeout_sec));
+    self->pong_timer.async_wait([self](const asio::error_code& ec) {
         if (ec == asio::error::operation_aborted) return;
         if (!self->alive) return;
 
         spdlog::error("Server {}: pong timeout, closing control socket", self->id);
-
         asio::error_code ignored;
         self->control_socket->lowest_layer().close(ignored);
-    });
+        // ensure waiting flag cleared
+        self->waiting_for_pong = false;
+        });
 
-    // 2. Читаем частями
-    control_socket->async_read_some(
-        asio::buffer(pong_buf),
-        [self](const asio::error_code& ec, std::size_t bytes)
-        {
-            if (!self->alive) return;
+    // Start async read for a full control Packet. Use async_read to ensure we consume whole packet
+    asio::async_read(*self->control_socket, asio::buffer(self->pong_buf),
+        [self](const asio::error_code& ec, std::size_t bytes_transferred) {
+
+            if (!self->alive) {
+                self->waiting_for_pong = false;
+                return;
+            }
 
             if (ec) {
-                self->pong_timer.cancel();
-                spdlog::error("Server {}: control read error (code {}): {}",
-                              self->id, ec.value(), ec.message());
+                if (ec == asio::error::eof || bytes_transferred == 0) {
+                    spdlog::warn("Server {}: received 0 bytes or connection closed", self->id);
+                }
+                else {
+                    spdlog::error("Server {}: control read error (code {}): {}", self->id, ec.value(), ec.message());
+                }
+                // on any read error treat as connection closed and shutdown
+                self->waiting_for_pong = false;
+                self->shutdown();
+                return;
+            }
+            // We expect a full Packet; parse and validate if needed
+            if (bytes_transferred < sizeof(Packet)) {
+                spdlog::warn("Server {}: received incomplete control packet: {} bytes", self->id, bytes_transferred);
+                self->waiting_for_pong = false;
                 self->shutdown();
                 return;
             }
 
-            self->pong_bytes += bytes;
+            Packet pkt;
+            std::memcpy(&pkt, self->pong_buf.data(), sizeof(Packet));
+            uint32_t pkt_type = ntohl(pkt.type);
 
-            if (self->pong_bytes < 4) {
-                // дочитываем
-                self->wait_pong();
-                return;
-            }
+            // Treat any control packet as pong for RTT measurement; optionally check pkt_type
+          
 
-            // 3. Успешно получили pong
+            auto elapsed = Clock::now() - self->last_ping_start_;
+            self->last_ping_ms_ = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+            // mirror to the numeric field used by external getters
+            self->last_ping_ms = static_cast<uint32_t>(self->last_ping_ms_.count());
+
+            // clear waiting flag and cancel timeout
+            self->waiting_for_pong = false;
             self->pong_timer.cancel();
             self->schedule_ping();
-        });
+        }
+    );
 }
 
 void GrayServer::schedule_ping() {
     auto self = shared_from_this();
-    ping_timer.expires_after(std::chrono::seconds(ping_interval_sec));
-    ping_timer.async_wait([self](const asio::error_code& ec) {
+    // Ensure we don't have multiple pending ping timers
+    self->ping_timer.cancel();
+    self->ping_timer.expires_after(std::chrono::seconds(ping_interval_sec));
+    self->ping_timer.async_wait([self](const asio::error_code& ec) {
         if (!self->alive || ec == asio::error::operation_aborted) return;
         self->send_ping();
         });
@@ -441,7 +448,7 @@ void GrayServer::splice_loop(
         (const asio::error_code& ec, std::size_t bytes)
         {
             if (ec) {
-                // Логировать только отклонения от нормы (не логируем EOF)
+                // Р›РѕРіРёСЂРѕРІР°С‚СЊ С‚РѕР»СЊРєРѕ РѕС‚РєР»РѕРЅРµРЅРёСЏ РѕС‚ РЅРѕСЂРјС‹ (РЅРµ Р»РѕРіРёСЂСѓРµРј EOF)
                 if (ec != asio::error::eof &&
                     ec != asio::error::operation_aborted) {
                     spdlog::error("Pair {}: read error (code {}): {}", pair_id, ec.value(), ec.message());
@@ -451,7 +458,7 @@ void GrayServer::splice_loop(
             }
 
             if (bytes == 0) {
-                // Нормальное завершение потока данных — не логируем
+                // РќРѕСЂРјР°Р»СЊРЅРѕРµ Р·Р°РІРµСЂС€РµРЅРёРµ РїРѕС‚РѕРєР° РґР°РЅРЅС‹С… вЂ” РЅРµ Р»РѕРіРёСЂСѓРµРј
                 self->remove_pair(pair_id);
                 return;
             }
