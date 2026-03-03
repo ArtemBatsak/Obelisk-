@@ -15,10 +15,11 @@ void GrayServer::async_accept_data() {
     auto self = shared_from_this();
     if (!self->alive) return;
     auto sock = std::make_shared<asio::ip::tcp::socket>(io_context_);
-
+	spdlog::info("Server {}: waiting for new data connection on port {}", id, data_port);
     data_acceptor_->async_accept(*sock,
         [self, sock](const asio::error_code& ec)
         {
+			
             if (!self->alive) return;
             if (!ec)
             {
@@ -38,12 +39,12 @@ void GrayServer::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock) {
     auto self = shared_from_this();
     if (!self->alive) return;
     auto buf = std::make_shared<uint32_t>();
-
+    spdlog::info("data port {} ", data_port);
     asio::async_read(*sock, asio::buffer(buf.get(), sizeof(uint32_t)),
         [this, self, sock, buf](const asio::error_code& ec, std::size_t bytes_read) {
             if (!self->alive) return;
             if (ec || bytes_read != sizeof(uint32_t)) {
-                // Логировать только отклонения от нормы
+                
                 if (ec && ec != asio::error::eof) {
                     spdlog::error("Server {}: error reading OTP from data socket (code {}): {}", id, ec.value(), ec.message());
                 }
@@ -58,7 +59,7 @@ void GrayServer::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock) {
 
             uint32_t received_otp = ntohl(*buf);
             bool otp_valid = false;
-
+			
             {
                 std::lock_guard<std::mutex> lock(otp_pool_mutex);
                 auto it = std::find(otp_pool.begin(), otp_pool.end(), received_otp);
@@ -150,9 +151,10 @@ void GrayServer::check_data_pool() {
 		
         send_control_packet(2, current_otp, [self](const asio::error_code& ec) {
             if (ec) {
-                // Ошибка отправки контрольного пакета — логируем
+                
                 spdlog::error("Server {}: failed to send OTP control packet (code {}): {}", self->id, ec.value(), ec.message());
             }
+            
             self->check_in_progress = false;
             self->async_accept_data();
             });

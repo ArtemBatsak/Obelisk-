@@ -129,8 +129,8 @@ public:
     GrayServer(int server_id,
         std::shared_ptr<ssl_socket> control_sock,
         asio::any_io_executor io,
-        int data_port,
         int client_port,
+        int data_port,
         int pool_size,
         std::shared_ptr<ServerManager> manager) 
         : id(server_id),

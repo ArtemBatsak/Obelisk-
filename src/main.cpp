@@ -204,7 +204,7 @@ asio::awaitable<void> async_authorize(
         auto p = data_servers->get_ports_by_id(id);
         auto server = std::make_shared<GrayServer>(
             id, ssl_sock, co_await asio::this_coro::executor,
-            p[1], p[0], pool_size, server_manager
+            p[0], p[1], pool_size, server_manager
         );
 
         // 5. Ответ клиенту (ID + порты для подтверждения)
