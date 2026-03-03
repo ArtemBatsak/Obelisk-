@@ -15,7 +15,6 @@ void GrayServer::async_accept_data() {
     auto self = shared_from_this();
     if (!self->alive) return;
     auto sock = std::make_shared<asio::ip::tcp::socket>(io_context_);
-	spdlog::info("Server {}: waiting for new data connection on port {}", id, data_port);
     data_acceptor_->async_accept(*sock,
         [self, sock](const asio::error_code& ec)
         {
@@ -27,7 +26,7 @@ void GrayServer::async_accept_data() {
             }
             else
             {
-                // Логировать только отклонения от нормы
+                
                 if (ec != asio::error::operation_aborted) {
                     spdlog::error("Server {}: error accepting data connection (code {}): {}", self->id, ec.value(), ec.message());
                 }
