@@ -38,7 +38,6 @@ void GrayServer::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock) {
     auto self = shared_from_this();
     if (!self->alive) return;
     auto buf = std::make_shared<uint32_t>();
-    spdlog::info("data port {} ", data_port);
     asio::async_read(*sock, asio::buffer(buf.get(), sizeof(uint32_t)),
         [this, self, sock, buf](const asio::error_code& ec, std::size_t bytes_read) {
             if (!self->alive) return;
@@ -546,10 +545,11 @@ void GrayServer::send_control_packet(uint32_t type, uint32_t value, std::functio
     auto pkt = std::make_shared<Packet>();
     pkt->type = htonl(type);
     pkt->value = htonl(value);
-
+	
     asio::async_write(*control_socket,
         asio::buffer(pkt.get(), sizeof(Packet)),
         [self = shared_from_this(), pkt, handler](const asio::error_code& ec, std::size_t) {
+            
             if (ec) {
                 spdlog::error("Server {}: send_control_packet failed (code {}): {}", self->id, ec.value(), ec.message());
                 self->shutdown();

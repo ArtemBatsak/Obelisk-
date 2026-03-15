@@ -361,7 +361,7 @@ std::array<int, 2> DataServers::get_ports_by_id(int search_id) const {
     for (const auto& s : servers_id) {
         if (s.id == search_id) {
             
-            return { s.data_port, s.client_port };
+            return { s.client_port, s.data_port};
         }
     }
     throw std::runtime_error("ID not found");
