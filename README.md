@@ -38,7 +38,7 @@ struct AuthorizationRequest {
 2. A **web interface is available on port 9000** (currently insecure, no authentication).
 3. Incoming clients are automatically forwarded through the Phantom connection pool.
 4. Future plans: authentication and secure web interface.
-![web](docs/web.png)
+![web](docs/Web.png)
 ## 📦 Setup and Usage
 
 -port-range — range of ports to allocate to clients.
