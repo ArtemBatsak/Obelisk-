@@ -13,7 +13,7 @@
 - The data connection between Obelisk and Phantom is **not encrypted intentionally**. Many servers already have encryption, and this avoids unnecessary load.
 
 ## 🏗 Architecture
-img 
+![Architecture](docs/Architecture.png)
 
 
 
@@ -22,6 +22,15 @@ img
 - Phantom communicates with the target servers or processes data
 
 
+## 📄 Phantom Data Format
+
+Obelisk expects Phantom to send initial authorization data in the following binary format:
+
+
+struct AuthorizationRequest {
+    uint32_t ID_CLIENT;   // Unique client ID
+    uint32_t POOL_SIZE;   // Number of sockets in the pool
+};
 
 ## 🚀 How It Works
 
@@ -37,10 +46,15 @@ img
 The web interface is accessible at http://YOUR_IP:9000.
 📄 Repository Structure
 Obelisk-/
+
 ├── src/                # source code
+
 ├── CMakeLists.txt      # build configuration
+
 ├── LICENSE.txt         # license
+
 └── README.md           # this file
+
 📄 License
 
 The project is licensed under the MIT License — see LICENSE.txt.
