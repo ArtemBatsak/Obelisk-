@@ -70,12 +70,13 @@ bool ServerManager::server_online(uint32_t id)  {
 
 uint32_t ServerManager::get_ping(uint32_t id) {
     std::lock_guard<std::mutex> lock(mtx_);
+	uint32_t ping = -1;
     for (const auto& s : servers_) {
         if (s && s->get_id() == id) {
-            return s->get_ping();
+			ping = s->get_ping();
         }
     }
-    return -1;
+    return ping;
 }
 uint32_t ServerManager::get_active_pairs(uint32_t id) {
     std::lock_guard<std::mutex> lock(mtx_);

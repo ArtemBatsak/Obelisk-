@@ -48,6 +48,10 @@ private:
 
 
 
+// --- HTML CONTENT --- 
+
+// This is a raw string literal containing the HTML, CSS, and JavaScript for the web admin interface.
+// You can put this in a separate .html file and read it at runtime, but for simplicity, it's included directly in the code.
 
 static const std::string INDEX_HTML = R"raw(
 <!DOCTYPE html>

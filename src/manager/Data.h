@@ -1,10 +1,4 @@
 ﻿#pragma once
-// Data.h
-// Brief: Utilities for storing server metadata and managing configured GrayServer instances.
-// - Server_struct: holds id, client/data ports and a comment; supports simple serialization.
-// - DataServers: manages list of known servers and available ports (file-backed).
-// - ServerManager: keeps active GrayServer instances and provides shutdown/remove operations.
-
 #include <string>
 #include <vector>
 #include <array>
@@ -18,6 +12,7 @@
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <fstream>
 
+// Data structure for server information + functions to convert to/from string for file storage
 struct Server_struct {
     int id;
     int client_port;
@@ -29,7 +24,7 @@ struct Server_struct {
 };
 
 class GrayServer; // forward
-
+// Data for all servers, handles file I/O and ID generation, also provides thread-safe access to server data for the web interface
 class DataServers {
 private:
     mutable std::mutex mtx_;
@@ -60,7 +55,7 @@ public:
     std::vector<Server_struct>  get_servers();
 
 };
-
+// Manager for ACTIVE servers, provides thread-safe access to server instances and operations like shutdown, ping retrieval, etc.
 class ServerManager : public std::enable_shared_from_this<ServerManager> {
 public:
     void add(std::shared_ptr<GrayServer> server);

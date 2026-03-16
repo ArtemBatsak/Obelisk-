@@ -13,12 +13,12 @@ void WebAdmin::start() {
 	httplib::Server svr;
 	m_running = true;
 
-	// --- СТАТИКА ---
+	// ---Statick---
 	svr.Get("/", [](const httplib::Request&, httplib::Response& res) {
 		res.set_content(INDEX_HTML, "text/html; charset=utf-8");
 		});
 
-	// --- API: ПОЛУЧИТЬ ВСЕ СЕРВЕРЫ ---
+	// --- API: get all servers ---
 	svr.Get("/api/servers", [this](const httplib::Request&, httplib::Response& res) {
 
 		auto servers = web_data_servers->get_servers();
@@ -45,7 +45,7 @@ void WebAdmin::start() {
 		res.set_content(j.dump(), "application/json");
 		});
 
-	// --- API: ЛОГИ ---
+	// --- API: Logs ---
 	svr.Get("/api/logs", [](const httplib::Request&, httplib::Response& res) {
 		std::string log_path = "logs/obelisk.log";
 		std::string content = "";
@@ -73,7 +73,7 @@ void WebAdmin::start() {
 		res.set_content(json({ {"logs", content} }).dump(), "application/json");
 		});
 
-
+	// --- API: delete server ---
 	svr.Post("/api/server/delete", [this](const httplib::Request& req, httplib::Response& res) {
 		try {
 			auto j = json::parse(req.body);
@@ -83,7 +83,7 @@ void WebAdmin::start() {
 		catch (...) { res.status = 400; }
 		});
 
-	
+	// --- API: change comment ---
 	svr.Post("/api/server/change_comment", [this](const httplib::Request& req, httplib::Response& res) {
 		try {
 			auto j = json::parse(req.body);
@@ -93,7 +93,7 @@ void WebAdmin::start() {
 		catch (...) { res.status = 400; }
 		});
 
-
+	// --- API: add server ---
 	svr.Post("/api/server/add", [this](const httplib::Request& req, httplib::Response& res) {
 		try {
 			auto j = json::parse(req.body);
@@ -103,7 +103,8 @@ void WebAdmin::start() {
 		catch (...) { res.status = 400; }
 		});
 
-
+	// --- API: stop server ---
+	// We can stop server, but we can`t start it again
 	svr.Post("/api/server/stop", [this](const httplib::Request& req, httplib::Response& res) {
 		try {
 			auto j = json::parse(req.body);

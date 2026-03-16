@@ -2,45 +2,41 @@
 #include "manager/Data.h"
 
 
-#include <asio.hpp>                // Основной ASIO (асинхронные сокеты, таймеры)
-#include <asio/ts/internet.hpp>    // TCP-сокеты и endpoint
-#include <asio/ts/buffer.hpp>      // Буферы для async_read/write
-#include <asio/ts/io_context.hpp>  // io_context
+#include <asio.hpp>                
+#include <asio/ts/internet.hpp>    
+#include <asio/ts/buffer.hpp>     
+#include <asio/ts/io_context.hpp>  
 #include <asio/steady_timer.hpp>
 
-#include <memory>      // std::shared_ptr, std::make_shared
-#include <vector>      // std::vector
-#include <array>       // std::array
-#include <mutex>       // std::mutex, std::lock_guard
-#include <atomic>      // std::atomic
-#include <thread>      // std::thread, thread_local
-#include <random>      // std::mt19937, std::random_device, std::uniform_int_distribution
-#include <algorithm>   // std::find_if, std::remove
-#include <cstdint>     // uint32_t, uint64_t
-#include <functional>  // std::function
-#include <chrono>      // std::chrono::seconds
-
+#include <memory>      
+#include <vector>     
+#include <array>       
+#include <mutex>      
+#include <atomic>      
+#include <thread>      
+#include <random>      
+#include <algorithm>   
+#include <cstdint>     
+#include <functional>  
+#include <chrono>      
 #ifdef _WIN32
-#include <winsock2.h>  // WSAIoctl, tcp_keepalive
-#include <mstcpip.h>   // SIO_KEEPALIVE_VALS
+#include <winsock2.h>  
+#include <mstcpip.h>   
 #else
-#include <unistd.h>    // close
+#include <unistd.h>    
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <netinet/tcp.h> // TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT
-#include <arpa/inet.h> // ntohl, htonl
+#include <netinet/tcp.h> 
+#include <arpa/inet.h> 
 #endif
 
 
 #include <asio/ssl.hpp>
 
 
-// Server_class.h
-// Brief: Defines GrayServer which manages control connection to a remote "gray" server,
-// accepts client and data socket connections, pairs them and forwards traffic between them.
-// Also contains supportive Packet and link_par structures.
 
-class ServerManager; // forward
+
+class ServerManager; 
 
 using ssl_socket = asio::ssl::stream<asio::ip::tcp::socket>;
 
@@ -56,6 +52,14 @@ struct link_par {
     uint64_t pair_id;
     int done_count = 2;
 };
+
+// The GrayServer class represents a single proxy server instance. It manages incoming client and data connections, 
+// maintains a pool of OTPs for authentication, handles ping/pong for health checks, and manages active client-data pairs. 
+// It communicates with the ServerManager for coordination and control.
+
+// HOW IT WORKS: We accept the control socket along with its ID, pool_size, etc.
+// We then check the specified pool_size and send connection requests to the data port.
+// We ensure that only the necessary sockets are added to the pool using an OTP key.
 
 class GrayServer : public std::enable_shared_from_this<GrayServer> {
 private:
@@ -91,12 +95,12 @@ private:
     std::mutex data_pool_mutex;
     std::mutex client_pool_mutex;
     asio::any_io_executor io_context_;
+
     static constexpr std::size_t BuffSize = 4096;
-    // Buffer sized to full control Packet to avoid leaving partial packet bytes in the stream
     std::array<char, sizeof(Packet)> pong_buf{};
     std::size_t pong_bytes = 0;
 
-    // Flag to prevent multiple concurrent wait-for-pong operations
+   
     std::atomic<bool> waiting_for_pong{ false };
 
     std::weak_ptr<ServerManager> manager_;

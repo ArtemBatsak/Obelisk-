@@ -6,7 +6,7 @@
 
 void init_logging()
 {
-    // защита от повторной инициализации
+	//protect against multiple initializations
     if (spdlog::get("obelisk"))
         return;
 
@@ -19,7 +19,7 @@ void init_logging()
     constexpr std::size_t max_file_size = 5 * 1024 * 1024;
     constexpr std::size_t max_files = 5;
 
-    // --- создаём sinks ---
+    
     auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
         log_file.string(), max_file_size, max_files
     );

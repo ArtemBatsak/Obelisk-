@@ -1,5 +1,6 @@
 ﻿#include "tls/tls_session.h"
 
+// Generate a self-signed certificate and private key in PEM format using OpenSSL
 std::pair<std::string, std::string> generate_self_signed_cert_pem()
 {
     EVP_PKEY* pkey = nullptr;
@@ -65,6 +66,7 @@ std::pair<std::string, std::string> generate_self_signed_cert_pem()
     return { priv_pem, cert_pem };
 }
 
+// Load PEM-encoded certificate and private key into an OpenSSL context
 bool load_cert_and_key_into_context(asio::ssl::context& ctx,
     const std::string& cert_pem,
     const std::string& key_pem)

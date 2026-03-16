@@ -283,7 +283,7 @@ void GrayServer::wait_pong() {
     if (!self->alive || !self->control_socket || !self->control_socket->lowest_layer().is_open())
         return;
 
-    // Cancel any previous pong timeout and start a fresh one
+    
     self->pong_timer.cancel();  
     self->pong_timer.expires_after(std::chrono::seconds(self->ping_timeout_sec));
     self->pong_timer.async_wait([self](const asio::error_code& ec) {
@@ -293,11 +293,11 @@ void GrayServer::wait_pong() {
         spdlog::error("Server {}: pong timeout, closing control socket", self->id);
         asio::error_code ignored;
         self->control_socket->lowest_layer().close(ignored);
-        // ensure waiting flag cleared
+        
         self->waiting_for_pong = false;
         });
 
-    // Start async read for a full control Packet. Use async_read to ensure we consume whole packet
+   
     asio::async_read(*self->control_socket, asio::buffer(self->pong_buf),
         [self](const asio::error_code& ec, std::size_t bytes_transferred) {
 
@@ -313,12 +313,12 @@ void GrayServer::wait_pong() {
                 else {
                     spdlog::error("Server {}: control read error (code {}): {}", self->id, ec.value(), ec.message());
                 }
-                // on any read error treat as connection closed and shutdown
+                
                 self->waiting_for_pong = false;
                 self->shutdown();
                 return;
             }
-            // We expect a full Packet; parse and validate if needed
+            
             if (bytes_transferred < sizeof(Packet)) {
                 spdlog::warn("Server {}: received incomplete control packet: {} bytes", self->id, bytes_transferred);
                 self->waiting_for_pong = false;
@@ -330,15 +330,14 @@ void GrayServer::wait_pong() {
             std::memcpy(&pkt, self->pong_buf.data(), sizeof(Packet));
             uint32_t pkt_type = ntohl(pkt.type);
 
-            // Treat any control packet as pong for RTT measurement; optionally check pkt_type
+            
           
 
             auto elapsed = Clock::now() - self->last_ping_start_;
             self->last_ping_ms_ = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
-            // mirror to the numeric field used by external getters
             self->last_ping_ms = static_cast<uint32_t>(self->last_ping_ms_.count());
 
-            // clear waiting flag and cancel timeout
+            
             self->waiting_for_pong = false;
             self->pong_timer.cancel();
             self->schedule_ping();
@@ -348,7 +347,6 @@ void GrayServer::wait_pong() {
 
 void GrayServer::schedule_ping() {
     auto self = shared_from_this();
-    // Ensure we don't have multiple pending ping timers
     self->ping_timer.cancel();
     self->ping_timer.expires_after(std::chrono::seconds(ping_interval_sec));
     self->ping_timer.async_wait([self](const asio::error_code& ec) {
