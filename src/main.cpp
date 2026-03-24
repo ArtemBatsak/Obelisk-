@@ -6,7 +6,7 @@
 #include <array>
 #include <coroutine>
 #define ASIO_HAS_CO_AWAIT
-#define ASIO_HAS_STD_COROUTINE // <--- Это заставит Asio искать в std::, а не в std::experimental
+#define ASIO_HAS_STD_COROUTINE 
 #include <coroutine>
 #include <asio.hpp>
 #include <asio/ssl.hpp>
@@ -64,7 +64,7 @@ int main()
 
         std::thread web_thread([&admin]()
             {
-                admin.start(); // блокирующий вызов
+                admin.start(); 
             });
 
         // --- Signal handling ---
@@ -161,7 +161,7 @@ void start_control_accept(asio::ssl::context& ssl_ctx,
     acceptor.async_accept(ssl_sock->lowest_layer(),
         [ssl_sock, &acceptor, &ssl_ctx, data_servers, &io, server_manager](const asio::error_code& ec) mutable {
             if (!ec) {
-                // Запускаем корутину в контексте io
+                
                 asio::co_spawn(io,
                     async_authorize(ssl_sock, data_servers, server_manager),
                     asio::detached);
@@ -188,30 +188,30 @@ asio::awaitable<void> async_authorize(
         // 1. Handshake
         co_await ssl_sock->async_handshake(asio::ssl::stream_base::server, asio::use_awaitable);
 
-        // 2. Читаем всё разом: ID (4 байта) + Pool Size (4 байта) = 8 байт
+		// 2. Wait for request
         struct { uint32_t id; uint32_t pool_size; } req;
         co_await asio::async_read(*ssl_sock, asio::buffer(&req, sizeof(req)), asio::use_awaitable);
 
         uint32_t id = ntohl(req.id);
         uint32_t pool_size = ntohl(req.pool_size);
 
-        // 3. Проверка ID
+		// 3. Check authorization
         if (!data_servers->authorize_id(id)) {
             throw std::runtime_error("Unauthorized ID: " + std::to_string(id));
         }
 
-        // 4. Логика создания сервера
+		// 4. Create GrayServer instance
         auto p = data_servers->get_ports_by_id(id);
         auto server = std::make_shared<GrayServer>(
             id, ssl_sock, co_await asio::this_coro::executor,
             p[0], p[1], pool_size, server_manager
         );
 
-        // 5. Ответ клиенту (ID + порты для подтверждения)
+		// 5. Send response with ports
         uint32_t resp[] = { htonl(id), htonl(p[0]), htonl(p[1]) };
         co_await asio::async_write(*ssl_sock, asio::buffer(resp), asio::use_awaitable);
 
-        // 6. Регистрация и запуск
+		// 6. Add to manager and start
         server_manager->add(server);
         server->start();
 
