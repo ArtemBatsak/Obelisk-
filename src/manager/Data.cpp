@@ -152,36 +152,18 @@ void DataServers::read_id() {
 
 void DataServers::read_ports() {
     std::lock_guard<std::mutex> lock(mtx_);
+
     std::ifstream infile(port_file);
-    if (!infile.is_open()) {
-        spdlog::error("Error: cannot open {}", port_file);
+    if (!infile) {
         return;
     }
 
-    infile.seekg(0, std::ios::end);
-    if (infile.tellg() == 0) {
-        int start, end;
-        spdlog::info("Port file is empty. Enter a port range (e.g., 50000 50020): ");
-        std::cin >> start >> end;
-
-        std::ofstream outfile(port_file, std::ios::trunc);
-        for (int p = start; p <= end; ++p) {
-            outfile << p << "\n";
-        }
-        outfile.close();
-    }
-
-    infile.clear();
-    infile.seekg(0, std::ios::beg);
     ports.clear();
+
     int port;
     while (infile >> port) {
-        ports.push_back(port);
+        ports.insert(port);
     }
-    infile.close();
-
-    spdlog::info("Loaded {} ports.", ports.size());
-
 }
 
 int DataServers::gen_id() {
@@ -206,8 +188,8 @@ bool DataServers::deleteServerById(uint32_t id)
 		std::lock_guard<std::mutex> lock(mtx_);
 		for (auto it = servers_id.begin(); it != servers_id.end(); ++it) {
 			if (it->id == id) {
-				ports.push_back(it->client_port);
-				ports.push_back(it->data_port);
+				ports.insert(it->client_port);
+				ports.insert(it->data_port);
 				servers_id.erase(it);
 				goto saved;
 			}
@@ -247,73 +229,54 @@ bool DataServers::updateServerComment(uint32_t id, const std::string& new_commen
     }
 }
 
+
 bool DataServers::add_id(const std::string comment_) {
-	{
-		std::lock_guard<std::mutex> lock(mtx_);
-		if (ports.size() < 2) {
-			spdlog::error("Error: not enough free ports available for a new server!");
-			return false;
-		}
-	}
+    int client_port_;
+    int data_port_;
+    int new_id;
 
-	int client_port_;
-	int data_port_;
-	{
-		std::lock_guard<std::mutex> lock(mtx_);
-		if (ports.size() < 2) {
-			spdlog::error("Error: not enough free ports available for a new server!");
-			return false;
-		}
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
 
-		client_port_ = ports.back(); ports.pop_back();
-		data_port_ = ports.back(); ports.pop_back();
+        
+        if (ports.size() < 2) {
+            spdlog::error("Error: not enough free ports available for a new server!");
+            return false;
+        }
 
-		Server_struct entry;
-		entry.id = gen_id();
-		entry.client_port = client_port_;
-		entry.data_port = data_port_;
-		entry.comment = comment_;
+        auto it = ports.begin();
+        client_port_ = *it;
+        ports.erase(it); 
 
-		servers_id.push_back(entry);
-	}
+        it = ports.begin(); 
+        data_port_ = *it;
+        ports.erase(it); 
 
+        new_id = gen_id(); 
+        Server_struct entry;
+        entry.id = new_id;
+        entry.client_port = client_port_;
+        entry.data_port = data_port_;
+        entry.comment = comment_;
 
-	save_all();
+        servers_id.push_back(entry);
+    }
 
-	spdlog::info("Server created with ID {}, client_port={}, data_port={}", gen_id(), client_port_, data_port_);
+    
+    save_all();
+
+    
+    spdlog::info("Server created with ID {}, client_port={}, data_port={}", new_id, client_port_, data_port_);
+
     return true;
 }
+
 void DataServers::show_id() const {
     std::lock_guard<std::mutex> lock(mtx_);
     spdlog::info("\n=== Logs ===");
     for (const auto& l : servers_id) {
         spdlog::info("ID: {} | Client: {} | Data: {} | Comment: {}", l.id, l.client_port, l.data_port, l.comment);
     }
-}
-
-void DataServers::delete_id() {
-    show_id();
-    spdlog::info("Enter the server ID to delete: ");
-    int id;
-    std::cin >> id;
-
-    {
-        std::lock_guard<std::mutex> lock(mtx_);
-        for (auto it = servers_id.begin(); it != servers_id.end(); ++it) {
-            if (it->id == id) {
-                ports.push_back(it->client_port);
-                ports.push_back(it->data_port);
-                servers_id.erase(it);
-                goto saved;
-            }
-        }
-    }
-    spdlog::error("Error: server with ID {} not found!", id);
-    return;
-
-saved:
-    save_all();
-    spdlog::info("Server with ID deleted: {}", id);
 }
 
 void DataServers::save_all() {
@@ -371,4 +334,44 @@ std::array<int, 2> DataServers::get_ports_by_id(int search_id) const {
 std::vector<Server_struct> DataServers::get_servers()  {
 	std::lock_guard<std::mutex> lock(mtx_);
 	return servers_id;
+}
+
+bool DataServers::add_ports(int first, int second) {
+    std::lock_guard<std::mutex> lock(mtx_);
+
+    
+    int start = first;
+    int end = (second == 0) ? first : second;
+    if (start > end) std::swap(start, end);
+
+  
+    if (start <= 1024 || end > 65535) {
+        spdlog::warn("Range {}-{} is out of valid bounds", start, end);
+        return false;
+    }
+
+        bool changed = false;
+    for (int i = start; i <= end; ++i) {
+        
+        auto result = ports.insert(i);
+        if (result.second) {
+            changed = true;
+        }
+        else {
+            spdlog::debug("Port {} already exists in the pool", i);
+        }
+    }
+
+   
+    if (changed) {
+        save_all();
+        if (start == end) {
+            spdlog::info("Port {} added to the free pool.", start);
+        }
+        else {
+            spdlog::info("Ports from {} to {} added to the free pool.", start, end);
+        }
+    }
+
+    return true;
 }

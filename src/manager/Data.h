@@ -11,6 +11,7 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <fstream>
+#include <set>
 
 // Data structure for server information + functions to convert to/from string for file storage
 struct Server_struct {
@@ -30,7 +31,7 @@ private:
     mutable std::mutex mtx_;
     std::vector<Server_struct> servers_id;
     std::string id_file = "Servers.txt";
-    std::vector<int> ports;
+    std::set<int> ports;
     std::string port_file = "Port.txt";
 
     void ensure_file();
@@ -43,7 +44,6 @@ public:
 
     bool add_id(const std::string comment_);
     void show_id() const;
-    void delete_id();
     void save_all();
 
 
@@ -53,6 +53,7 @@ public:
     bool authorize_id(uint32_t id) const;
     std::array<int, 2> get_ports_by_id(int search_id) const;
     std::vector<Server_struct>  get_servers();
+	bool add_ports(int first, int second = 0);
 
 };
 // Manager for ACTIVE servers, provides thread-safe access to server instances and operations like shutdown, ping retrieval, etc.
