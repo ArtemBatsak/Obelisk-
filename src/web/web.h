@@ -109,7 +109,7 @@ static const std::string INDEX_HTML = R"raw(
         }
 
         .btn-icon:hover { background: #444; }
-        .plus-btn { background: var(--accent); }
+        .manage-btn { background: var(--accent); }
 
         .container { max-width: 900px; margin: 0 auto; padding: 20px; }
 
@@ -136,6 +136,7 @@ static const std::string INDEX_HTML = R"raw(
         .delete { background: #333; color: #ff7777; }
         .edit { background: #333; color: #ccc; }
         .stop { background: #333; color: var(--warning); }
+        .primary-btn { background: var(--accent); color: white; width: 100%; margin-bottom: 10px; font-size: 15px; padding: 12px; }
         button:hover { filter: brightness(1.2); }
 
         #consoleOverlay {
@@ -185,7 +186,6 @@ static const std::string INDEX_HTML = R"raw(
         input { width: 100%; padding: 10px; margin: 15px 0; background: #252525; border: 1px solid #444; color: white; border-radius: 4px; box-sizing: border-box; }
         
         .port-range-inputs { display: flex; align-items: center; gap: 10px; }
-        .port-range-inputs input { margin: 10px 0; }
     </style>
 </head>
 <body>
@@ -193,13 +193,21 @@ static const std::string INDEX_HTML = R"raw(
 <header>
     <span>Gray Proxy <span style="color:var(--accent)">Admin</span></span>
     <div class="header-actions">
-        <button class="btn-icon" onclick="openPortsModal()" title="Add Free Ports">🔌</button>
         <button class="btn-icon" onclick="toggleConsole()" title="System Console">📟</button>
-        <button class="btn-icon plus-btn" onclick="openAddModal()" title="Add New Server">+</button>
+        <button class="btn-icon manage-btn" onclick="openManageModal()" title="Manage System">⚙️</button>
     </div>
 </header>
 
 <div class="container" id="servers"></div>
+
+<div class="modal" id="manageModal">
+    <div class="modal-content">
+        <h3 style="margin-top:0">Management</h3>
+        <button class="primary-btn" onclick="triggerAddClient()">👤 Add Client (Server)</button>
+        <button class="primary-btn" onclick="triggerManagePorts()">🔌 Manage Ports Pool</button>
+        <button class="delete" style="width:100%; margin-top: 10px;" onclick="closeManageModal()">Close</button>
+    </div>
+</div>
 
 <div id="consoleOverlay">
     <div class="console-header">
@@ -244,6 +252,26 @@ let currentEditId = null;
 let consoleActive = false;
 let consoleInterval = null;
 
+// --- Новые функции для управления модальным окном Manage ---
+function openManageModal() {
+    document.getElementById("manageModal").style.display = "flex";
+}
+
+function closeManageModal() {
+    document.getElementById("manageModal").style.display = "none";
+}
+
+function triggerAddClient() {
+    closeManageModal();
+    openAddModal();
+}
+
+function triggerManagePorts() {
+    closeManageModal();
+    openPortsModal();
+}
+// ---------------------------------------------------------
+
 async function api(path, body = null) {
     try {
         const options = {
@@ -251,24 +279,11 @@ async function api(path, body = null) {
             headers: {"Content-Type": "application/json"}
         };
         if (body) options.body = JSON.stringify(body);
-
         const res = await fetch(path, options);
-
-        if (!res.ok) {
-            console.error(`API Error: ${res.status} ${res.statusText}`);
-            return { status: "error" };
-        }
-
-        try {
-            const data = await res.json();
-            return data;
-        } catch (jsonError) {
-            console.error("Invalid JSON from server:", jsonError);
-            return { status: "error" };
-        }
-
-    } catch (networkError) {
-        console.error("Network or fetch error:", networkError);
+        if (!res.ok) return { status: "error" };
+        const data = await res.json();
+        return data;
+    } catch (e) {
         return { status: "error" };
     }
 }
@@ -301,13 +316,10 @@ async function loadServers() {
     });
 }
 
-// Handler for Stop action
 async function stopServer(id) {
     if (confirm(`Stop server ID: ${id}?`)) {
         const res = await api("/api/server/stop", { id });
-        if (res.status === "ok") {
-            loadServers();
-        }
+        if (res.status === "ok") loadServers();
     }
 }
 
@@ -316,40 +328,12 @@ async function updateConsole() {
     if (data && data.logs) {
         const el = document.getElementById("consoleContent");
         const shouldScroll = el.scrollTop + el.clientHeight >= el.scrollHeight - 50;
-        
         const lines = data.logs.split('\n');
-        const coloredHtml = lines.map(line => {
+        el.innerHTML = lines.map(line => {
             if (!line.trim()) return "";
             let safeLine = line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-            let lvlClass = "log-msg";
-            let levelLabel = "";
-
-            if (safeLine.toLowerCase().includes("[info]")) {
-                lvlClass = "log-info";
-                levelLabel = "[INFO]";
-            } else if (safeLine.toLowerCase().includes("[error]")) {
-                lvlClass = "log-error";
-                levelLabel = "[ERROR]";
-            } else if (safeLine.toLowerCase().includes("[warn]")) {
-                lvlClass = "log-warn";
-                levelLabel = "[WARN]";
-            } else if (safeLine.toLowerCase().includes("[debug]")) {
-                lvlClass = "log-debug";
-                levelLabel = "[DEBUG]";
-            }
-
-            const dateMatch = safeLine.match(/^\[(.*?)\]/);
-            if (dateMatch) {
-                const timestamp = dateMatch[1];
-                let cleanText = safeLine.replace(/^\[.*?\]/, "").replace(/\[.*?\]/, "").trim();
-                return `<span class="log-date">[${timestamp}]</span> ` +
-                       `<span class="${lvlClass}">${levelLabel}</span> ` +
-                       `<span class="log-msg">${cleanText}</span>`;
-            }
-            return `<span class="log-msg">${safeLine}</span>`;
-        }).join('\n');
-
-        el.innerHTML = coloredHtml;
+            return `<div class="log-msg">${safeLine}</div>`;
+        }).join('');
         if (shouldScroll) el.scrollTop = el.scrollHeight;
     }
 }
@@ -366,44 +350,22 @@ function toggleConsole() {
     }
 }
 
-// Ports Modal Functions
 function openPortsModal() {
     document.getElementById("portFirst").value = "";
     document.getElementById("portSecond").value = "";
     document.getElementById("portsModal").style.display = "flex";
 }
 
-function closePortsModal() {
-    document.getElementById("portsModal").style.display = "none";
-}
+function closePortsModal() { document.getElementById("portsModal").style.display = "none"; }
 
 async function submitPorts() {
     const f = document.getElementById("portFirst").value;
     const s = document.getElementById("portSecond").value;
-    
-    if (!f) {
-        alert("Please enter at least the first port!");
-        return;
-    }
-
-    const first = parseInt(f);
-    const second = (s === "" || s === null) ? 0 : parseInt(s);
-
-    if (first <= 1024 || (second !== 0 && second <= 1024)) {
-        alert("Ports must be greater than 1024.");
-        return;
-    }
-
-    const res = await api("/api/ports/add", { first, second });
-    if (res.status === "ok") {
-        closePortsModal();
-        alert("Ports added to the pool successfully.");
-    } else {
-        alert("Error adding ports. Check system logs.");
-    }
+    if (!f) return alert("Enter port!");
+    const res = await api("/api/ports/add", { first: parseInt(f), second: s ? parseInt(s) : 0 });
+    if (res.status === "ok") { closePortsModal(); alert("Ports added!"); }
 }
 
-// Server Modal Functions
 function openAddModal() {
     currentEditId = null;
     document.getElementById("modalTitle").innerText = "Add Server";
