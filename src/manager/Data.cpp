@@ -337,34 +337,33 @@ std::vector<Server_struct> DataServers::get_servers()  {
 }
 
 bool DataServers::add_ports(int first, int second) {
-    std::lock_guard<std::mutex> lock(mtx_);
-
-    
+    bool changed = false;
     int start = first;
     int end = (second == 0) ? first : second;
     if (start > end) std::swap(start, end);
 
-  
+
     if (start <= 1024 || end > 65535) {
         spdlog::warn("Range {}-{} is out of valid bounds", start, end);
         return false;
     }
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
 
-        bool changed = false;
-    for (int i = start; i <= end; ++i) {
-        
-        auto result = ports.insert(i);
-        if (result.second) {
-            changed = true;
-        }
-        else {
-            spdlog::debug("Port {} already exists in the pool", i);
+        for (int i = start; i <= end; ++i) {
+
+            auto result = ports.insert(i);
+            if (result.second) {
+                changed = true;
+            }
+            else {
+                spdlog::debug("Port {} already exists in the pool", i);
+            }
         }
     }
-
    
     if (changed) {
-        save_all();
+		save_all();
         if (start == end) {
             spdlog::info("Port {} added to the free pool.", start);
         }

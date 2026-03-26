@@ -114,6 +114,28 @@ void WebAdmin::start() {
 		catch (...) { res.status = 400; }
 		});
 
+	svr.Post("/api/ports/add", [this](const httplib::Request& req, httplib::Response& res) {
+		try {
+			auto j = nlohmann::json::parse(req.body);
+
+			
+			int first = j.at("first").get<int>();
+			int second = j.at("second").get<int>();
+
+			// Вызываем нашу крутую функцию с std::set
+			bool success = web_data_servers->add_ports(first, second);
+
+			res.set_content(nlohmann::json({ {"status", success ? "ok" : "error"} }).dump(), "application/json");
+		}
+		catch (const std::exception& e) {
+			spdlog::error("API Error (add_ports): {}", e.what());
+			res.status = 400;
+			res.set_content(nlohmann::json({ {"status", "error"}, {"message", "Invalid JSON or parameters"} }).dump(), "application/json");
+		}
+		catch (...) {
+			res.status = 500;
+		}
+		});
 	std::cout << ">>> Admin panel started at http://localhost:" << port_ << std::endl;
 	m_running = true;
 	svr.listen("0.0.0.0", port_);

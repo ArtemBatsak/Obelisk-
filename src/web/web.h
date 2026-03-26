@@ -138,7 +138,6 @@ static const std::string INDEX_HTML = R"raw(
         .stop { background: #333; color: var(--warning); }
         button:hover { filter: brightness(1.2); }
 
-        /* Console Overlay */
         #consoleOverlay {
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
@@ -170,7 +169,6 @@ static const std::string INDEX_HTML = R"raw(
             padding: 10px;
         }
 
-        /* --- LOG COLORS --- */
         .log-date { color: #666 !important; }
         .log-info { color: #00ff66 !important; font-weight: bold; }
         .log-error { color: #ff4444 !important; font-weight: bold; }
@@ -178,7 +176,6 @@ static const std::string INDEX_HTML = R"raw(
         .log-debug { color: #2e7dff !important; font-weight: bold; }
         .log-msg { color: #ffffff !important; }
 
-        /* Modal */
         .modal {
             position: fixed; top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.85); display: none;
@@ -186,6 +183,9 @@ static const std::string INDEX_HTML = R"raw(
         }
         .modal-content { background: #1b1b1b; padding: 25px; border-radius: 10px; width: 320px; border: 1px solid #333; }
         input { width: 100%; padding: 10px; margin: 15px 0; background: #252525; border: 1px solid #444; color: white; border-radius: 4px; box-sizing: border-box; }
+        
+        .port-range-inputs { display: flex; align-items: center; gap: 10px; }
+        .port-range-inputs input { margin: 10px 0; }
     </style>
 </head>
 <body>
@@ -193,8 +193,9 @@ static const std::string INDEX_HTML = R"raw(
 <header>
     <span>Gray Proxy <span style="color:var(--accent)">Admin</span></span>
     <div class="header-actions">
-        <button class="btn-icon" onclick="toggleConsole()" title="Console">📟</button>
-        <button class="btn-icon plus-btn" onclick="openAddModal()" title="Add Server">+</button>
+        <button class="btn-icon" onclick="openPortsModal()" title="Add Free Ports">🔌</button>
+        <button class="btn-icon" onclick="toggleConsole()" title="System Console">📟</button>
+        <button class="btn-icon plus-btn" onclick="openAddModal()" title="Add New Server">+</button>
     </div>
 </header>
 
@@ -206,6 +207,25 @@ static const std::string INDEX_HTML = R"raw(
         <button onclick="toggleConsole()" style="background:var(--danger); color:white; padding: 8px 20px; border-radius: 5px; cursor: pointer;">Close</button>
     </div>
     <div id="consoleContent"></div>
+</div>
+
+<div class="modal" id="portsModal">
+    <div class="modal-content">
+        <h3 style="margin-top:0">Add Free Ports</h3>
+        <p class="small" style="color: var(--text-dim); margin-bottom: 5px;">Enter a single port or a range.</p>
+        <p class="small" style="color: var(--warning); margin-bottom: 15px;">Allowed: 1025 - 65535</p>
+        
+        <div class="port-range-inputs">
+            <input id="portFirst" type="number" placeholder="From" min="1025" max="65535">
+            <span>-</span>
+            <input id="portSecond" type="number" placeholder="To" min="1025" max="65535">
+        </div>
+        
+        <div style="display: flex; gap: 10px; margin-top: 10px;">
+            <button class="edit" style="flex: 1; background:var(--accent); color:white" onclick="submitPorts()">Add Range</button>
+            <button class="delete" style="flex: 1" onclick="closePortsModal()">Cancel</button>
+        </div>
+    </div>
 </div>
 
 <div class="modal" id="addModal">
@@ -346,6 +366,44 @@ function toggleConsole() {
     }
 }
 
+// Ports Modal Functions
+function openPortsModal() {
+    document.getElementById("portFirst").value = "";
+    document.getElementById("portSecond").value = "";
+    document.getElementById("portsModal").style.display = "flex";
+}
+
+function closePortsModal() {
+    document.getElementById("portsModal").style.display = "none";
+}
+
+async function submitPorts() {
+    const f = document.getElementById("portFirst").value;
+    const s = document.getElementById("portSecond").value;
+    
+    if (!f) {
+        alert("Please enter at least the first port!");
+        return;
+    }
+
+    const first = parseInt(f);
+    const second = (s === "" || s === null) ? 0 : parseInt(s);
+
+    if (first <= 1024 || (second !== 0 && second <= 1024)) {
+        alert("Ports must be greater than 1024.");
+        return;
+    }
+
+    const res = await api("/api/ports/add", { first, second });
+    if (res.status === "ok") {
+        closePortsModal();
+        alert("Ports added to the pool successfully.");
+    } else {
+        alert("Error adding ports. Check system logs.");
+    }
+}
+
+// Server Modal Functions
 function openAddModal() {
     currentEditId = null;
     document.getElementById("modalTitle").innerText = "Add Server";
