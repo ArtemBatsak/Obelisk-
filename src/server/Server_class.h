@@ -1,13 +1,11 @@
 ﻿#pragma once
-#include "manager/Data.h"
-
-
+#include "manager/Server_manager.h"
 #include <asio.hpp>                
 #include <asio/ts/internet.hpp>    
 #include <asio/ts/buffer.hpp>     
 #include <asio/ts/io_context.hpp>  
 #include <asio/steady_timer.hpp>
-
+#include <asio/ssl.hpp>
 #include <memory>      
 #include <vector>     
 #include <array>       
@@ -29,10 +27,6 @@
 #include <netinet/tcp.h> 
 #include <arpa/inet.h> 
 #endif
-
-
-#include <asio/ssl.hpp>
-
 
 
 
@@ -105,9 +99,7 @@ private:
 
     std::weak_ptr<ServerManager> manager_;
 
-    void init_acceptor(int data_port, int client_port);
-    void async_accept_data();
-    void handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock);
+    void init_acceptor(int client_port);
     void check_data_pool();
     void enable_keepalive(std::shared_ptr<asio::ip::tcp::socket> sock);
     void async_accept_client();
@@ -154,12 +146,12 @@ public:
     }
 
     void start() {
-        init_acceptor(data_port, client_port);
-        async_accept_data();
+        init_acceptor(client_port);
         async_accept_client();
         check_data_pool();
 		schedule_ping();    
 	}
+    void handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock, uint32_t otp);
     uint32_t get_id() const { return id; }
     uint32_t get_ping() const { return last_ping_ms.load(); }
 	uint32_t get_active_pairs() {

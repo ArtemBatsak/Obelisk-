@@ -1,97 +1,10 @@
 ﻿#include "manager/Data.h"
 
 
-// --------------- ServerManager methods----------
-void ServerManager::add(std::shared_ptr<GrayServer> server) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    servers_.push_back(std::move(server));
-}
-
-void ServerManager::remove(uint32_t id) {
-    std::lock_guard<std::mutex> lock(mtx_);
-
-    auto before = servers_.size();
-
-    servers_.erase(
-        std::remove_if(
-            servers_.begin(),
-            servers_.end(),
-            [id](const std::shared_ptr<GrayServer>& s) {
-                return s && s->get_id() == id;
-            }),
-        servers_.end()
-    );
-
-    if (before != servers_.size()) {
-		spdlog::info("GrayServer {} removed from manager", id);
-    }
-}
-
-void ServerManager::shutdown_all() {
-    std::vector<std::shared_ptr<GrayServer>> copy;
-
-    {
-        std::lock_guard<std::mutex> lock(mtx_);
-        copy = servers_;
-        servers_.clear();
-    }
-
-    for (auto& s : copy) {
-        if (s) s->shutdown();
-    }
-
-    spdlog::info("All GrayServers shutdown requested");
-}
-
-bool ServerManager::shutdown_id(uint32_t id) {
-    std::lock_guard<std::mutex> lock(mtx_);
-
-    
-    for (auto& server : servers_) {
-        if (server && server->get_id() == id) {
-            server->shutdown();  
-            spdlog::info("GrayServer {} shutdown called", id);
-            return true;         
-        }
-    }
-
-    spdlog::error("GrayServer {} not found in manager", id);
-    return false;  
-}
-bool ServerManager::server_online(uint32_t id)  {
-    std::lock_guard<std::mutex> lock(mtx_);
-    for (const auto& s : servers_) {
-        if (s && s->get_id() == id) {
-            return true;
-        }
-    }
-    return false;
-}
-
-uint32_t ServerManager::get_ping(uint32_t id) {
-    std::lock_guard<std::mutex> lock(mtx_);
-	uint32_t ping = -1;
-    for (const auto& s : servers_) {
-        if (s && s->get_id() == id) {
-			ping = s->get_ping();
-        }
-    }
-    return ping;
-}
-uint32_t ServerManager::get_active_pairs(uint32_t id) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    for (const auto& s : servers_) {
-        if (s && s->get_id() == id) {
-            return s->get_active_pairs();
-        }
-    }
-    return -1;
-}
 // ---------------- Server_struct ----------------
 std::string Server_struct::to_string() const {
     return "{ \"id\": " + std::to_string(id)
         + ", \"client_port\": " + std::to_string(client_port)
-        + ", \"data_port\": " + std::to_string(data_port)
         + ", \"comment\": \"" + comment + "\" }";
 }
 
@@ -106,10 +19,6 @@ Server_struct Server_struct::from_string(const std::string& line) {
     pos1 = line.find("\"client_port\": ");
     pos2 = line.find(",", pos1);
     entry.client_port = std::stoi(line.substr(pos1 + 15, pos2 - (pos1 + 15)));
-
-    pos1 = line.find("\"data_port\": ");
-    pos2 = line.find(",", pos1);
-    entry.data_port = std::stoi(line.substr(pos1 + 13, pos2 - (pos1 + 13)));
 
     pos1 = line.find("\"comment\": \"");
     pos2 = line.rfind("\"");
@@ -189,7 +98,6 @@ bool DataServers::deleteServerById(uint32_t id)
 		for (auto it = servers_id.begin(); it != servers_id.end(); ++it) {
 			if (it->id == id) {
 				ports.insert(it->client_port);
-				ports.insert(it->data_port);
 				servers_id.erase(it);
 				goto saved;
 			}
@@ -229,17 +137,15 @@ bool DataServers::updateServerComment(uint32_t id, const std::string& new_commen
     }
 }
 
-
 bool DataServers::add_id(const std::string comment_) {
     int client_port_;
-    int data_port_;
     int new_id;
 
     {
         std::lock_guard<std::mutex> lock(mtx_);
 
         
-        if (ports.size() < 2) {
+        if (ports.size() < 1) {
             spdlog::error("Error: not enough free ports available for a new server!");
             return false;
         }
@@ -248,15 +154,11 @@ bool DataServers::add_id(const std::string comment_) {
         client_port_ = *it;
         ports.erase(it); 
 
-        it = ports.begin(); 
-        data_port_ = *it;
-        ports.erase(it); 
 
         new_id = gen_id(); 
         Server_struct entry;
         entry.id = new_id;
         entry.client_port = client_port_;
-        entry.data_port = data_port_;
         entry.comment = comment_;
 
         servers_id.push_back(entry);
@@ -266,7 +168,7 @@ bool DataServers::add_id(const std::string comment_) {
     save_all();
 
     
-    spdlog::info("Server created with ID {}, client_port={}, data_port={}", new_id, client_port_, data_port_);
+    spdlog::info("Server created with ID {}, client_port={}", new_id, client_port_);
 
     return true;
 }
@@ -275,7 +177,7 @@ void DataServers::show_id() const {
     std::lock_guard<std::mutex> lock(mtx_);
     spdlog::info("\n=== Logs ===");
     for (const auto& l : servers_id) {
-        spdlog::info("ID: {} | Client: {} | Data: {} | Comment: {}", l.id, l.client_port, l.data_port, l.comment);
+        spdlog::info("ID: {} | Client: {} | Comment: {}", l.id, l.client_port, l.comment);
     }
 }
 
@@ -312,20 +214,18 @@ bool DataServers::authorize_id(uint32_t id) const {
     std::lock_guard<std::mutex> lock(mtx_);
     for (const auto& s : servers_id) {
         if (s.id == id) {
-            spdlog::info("Authorization successful for ID {}", id);
             return true;
         }
     }
-    spdlog::info("Authorization FAILED for ID {}", id);
     return false;
 }
 
-std::array<int, 2> DataServers::get_ports_by_id(int search_id) const {
+int DataServers::get_ports_by_id(int search_id) const {
     std::lock_guard<std::mutex> lock(mtx_);
     for (const auto& s : servers_id) {
         if (s.id == search_id) {
             
-            return { s.client_port, s.data_port};
+            return s.client_port;
         }
     }
     throw std::runtime_error("ID not found");

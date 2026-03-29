@@ -8,7 +8,7 @@
 #include <fstream>
 #include <filesystem>
 #include "manager/Data.h"
-
+#include "manager/Server_manager.h"
 
 struct ProxyServerInfo {
     int id;

@@ -34,7 +34,6 @@ void WebAdmin::start() {
 			j.push_back({
 				{"id", s.id},
 				{"client_port", s.client_port},
-				{"data_port", s.data_port},
 				{"comment", s.comment},
 				{"last_seen", last_seen},
 				{"active_pairs", active_pairs},

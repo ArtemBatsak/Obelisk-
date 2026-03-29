@@ -1,61 +1,18 @@
 ﻿#include "Server_class.h"
 #include "logger/logger.h"
 
-void GrayServer::init_acceptor(int data_port, int client_port) {
-    data_acceptor_ = std::make_shared<asio::ip::tcp::acceptor>(
-        io_context_,
-        asio::ip::tcp::endpoint(asio::ip::tcp::v4(), data_port));
-
+void GrayServer::init_acceptor(int client_port) {
     client_acceptor_ = std::make_shared<asio::ip::tcp::acceptor>(
         io_context_,
         asio::ip::tcp::endpoint(asio::ip::tcp::v4(), client_port));
 }
 
-void GrayServer::async_accept_data() {
+void GrayServer::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock, uint32_t otp) {
     auto self = shared_from_this();
     if (!self->alive) return;
-    auto sock = std::make_shared<asio::ip::tcp::socket>(io_context_);
-    data_acceptor_->async_accept(*sock,
-        [self, sock](const asio::error_code& ec)
-        {
-			
-            if (!self->alive) return;
-            if (!ec)
-            {
-                self->handle_new_data(sock);
-            }
-            else
-            {
-                
-                if (ec != asio::error::operation_aborted) {
-                    spdlog::error("Server {}: error accepting data connection (code {}): {}", self->id, ec.value(), ec.message());
-                }
-            }
-        });
-}
+    
 
-void GrayServer::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock) {
-    auto self = shared_from_this();
-    if (!self->alive) return;
-    auto buf = std::make_shared<uint32_t>();
-    asio::async_read(*sock, asio::buffer(buf.get(), sizeof(uint32_t)),
-        [this, self, sock, buf](const asio::error_code& ec, std::size_t bytes_read) {
-            if (!self->alive) return;
-            if (ec || bytes_read != sizeof(uint32_t)) {
-                
-                if (ec && ec != asio::error::eof) {
-                    spdlog::error("Server {}: error reading OTP from data socket (code {}): {}", id, ec.value(), ec.message());
-                }
-                else if (!ec && bytes_read != sizeof(uint32_t)) {
-                    spdlog::error("Server {}: unexpected read size when reading OTP: expected {} bytes, got {}", id, sizeof(uint32_t), bytes_read);
-                }
-                asio::error_code ignored;
-                sock->shutdown(asio::ip::tcp::socket::shutdown_both, ignored);
-                sock->close(ignored);
-                return;
-            }
-
-            uint32_t received_otp = ntohl(*buf);
+            uint32_t received_otp = otp;
             bool otp_valid = false;
 			
             {
@@ -95,7 +52,7 @@ void GrayServer::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock) {
             asio::error_code ka_ec;
             sock->set_option(asio::socket_base::keep_alive(true), ka_ec);
             if (ka_ec) {
-                // Логирование ошибки установки keepalive
+                
                 spdlog::error("Server {}: failed to set keepalive on data socket (code {}): {}", id, ka_ec.value(), ka_ec.message());
             }
 
@@ -104,7 +61,7 @@ void GrayServer::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock) {
                 data_pool.push_back(sock);
             }
             self->try_create_pair();
-        });
+        
 }
 
 uint32_t GrayServer::generate_otp() {
@@ -154,7 +111,6 @@ void GrayServer::check_data_pool() {
             }
             
             self->check_in_progress = false;
-            self->async_accept_data();
             });
     }
     else {
@@ -509,7 +465,7 @@ void GrayServer::remove_pair(uint64_t pair_id) {
         data_sock->shutdown(asio::ip::tcp::socket::shutdown_both, ec);
         data_sock->close(ec);
     }
-
+	//spdlog::info("Pair {} removed", pair_id);
 }
 
 void GrayServer::remove_all_pairs() {
