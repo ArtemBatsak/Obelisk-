@@ -13,7 +13,6 @@
 struct ProxyServerInfo {
     int id;
     int client_port;
-    int data_port;
     std::string comment;
     int last_seen; 
     int active_pairs;
@@ -302,7 +301,7 @@ async function loadServers() {
                 <div class="server-info">
                     <span class="server-name" id="comm-${server.id}"></span>
                     <div class="small">ID: ${server.id} | Pairs: ${server.active_pairs} | Latency: ${server.last_seen} ms</div>
-                    <div class="small">Ports: ${server.client_port} (Client) → ${server.data_port} (Data)</div>
+                    <div class="small">Ports: ${server.client_port} (Client) </div>
                 </div>
             </div>
             <div class="actions">

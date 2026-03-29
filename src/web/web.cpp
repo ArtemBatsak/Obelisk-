@@ -29,7 +29,10 @@ void WebAdmin::start() {
 		{
 			bool online = web_server_manager->server_online(s.id);
 			int active_pairs = web_server_manager->get_active_pairs(s.id);
-			auto last_seen = web_server_manager->get_ping(s.id);
+			auto last_seen = -1;
+			if (online)  last_seen = web_server_manager->get_ping(s.id);
+			
+		
 
 			j.push_back({
 				{"id", s.id},

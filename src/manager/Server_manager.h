@@ -23,7 +23,7 @@ struct DATA_PACKET {
 
 class ServerManager : public std::enable_shared_from_this<ServerManager> {
 public:
-    ServerManager(const std::atomic<bool>& running_,
+    ServerManager(std::shared_ptr<std::atomic<bool>> running_,
         int CONTROL_PORT_,
         int DATA_PORT_,
         std::shared_ptr<DataServers> data_servers_,
@@ -65,7 +65,7 @@ public:
     uint32_t get_active_pairs(uint32_t id);
 
 private:
-    const std::atomic<bool>& running;
+    std::shared_ptr<std::atomic<bool>> running;
     asio::any_io_executor io_context_;
     const int control_port;
 	const int data_port;

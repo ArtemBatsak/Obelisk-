@@ -21,7 +21,7 @@
 #include "web/web.h"
 
 int WEB_PORT = 8000;
-std::atomic<bool> running(true);
+auto running = std::make_shared<std::atomic<bool>>(true);
 const int CONTROL_PORT = 44555;
 const int DATA_PORT = 50021;
 
@@ -71,7 +71,7 @@ int main()
             {
                 spdlog::info("Shutdown signal received...");
 
-                running = false;
+                *running = false;
 
                 admin.stop();                    
                 server_manager->shutdown_all();  

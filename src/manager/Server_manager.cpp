@@ -107,9 +107,7 @@ void ServerManager::start_up_tls() {
 
     spdlog::info("Self-signed certificate generated (in memory)");
 
-    // --- Control acceptor ---
-    tcp::acceptor acceptor(io_context_, tcp::endpoint(tcp::v4(), control_port));
-    spdlog::info("Server started on port {} (TLS control)", control_port);
+  
 }
 //===================================================
 void ServerManager::init_acceptor() {
@@ -121,7 +119,7 @@ void ServerManager::init_acceptor() {
 //===================================================
 void ServerManager::async_accept_data() {
     auto self = shared_from_this();
-    if (!running.load()) return;
+    if (!running) return;
 
     auto sock = std::make_shared<asio::ip::tcp::socket>(io_context_);
 
@@ -138,7 +136,7 @@ void ServerManager::async_accept_data() {
             }
 
             
-            if (self->running.load()) {
+            if (self->running) {
                 self->async_accept_data();
             }
         });
@@ -157,7 +155,7 @@ void ServerManager::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock)
     
     asio::async_read(*sock, asio::buffer(buf.get(), sizeof(DATA_PACKET)),
         [self, sock, buf](const asio::error_code& ec, std::size_t bytes_read) {
-            if (!self->running.load()) return;
+            if (!self->running) return;
 
             if (ec || bytes_read != sizeof(DATA_PACKET)) {
                 spdlog::warn("Failed to read DATA_PACKET: {}", ec.message());
@@ -170,22 +168,25 @@ void ServerManager::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock)
             uint32_t id = ntohl(buf->id);
             uint32_t otp = ntohl(buf->otp);
             spdlog::info("Received data packet for server ID: {}, OTP: {}", id, otp);
+            { 
+                std::lock_guard<std::mutex> lock(self->mtx_);
+                if (self->server_online(id)) {
 
-            if (self->server_online(id)) {
-                
-                for (auto& s : self->servers) {
-                    if (s && s->get_id() == id) {
-						spdlog::info("Forwarding data connection to GrayServer {}", id);
-                        s->handle_new_data(sock, otp);
-                        return; 
+                    for (auto& s : self->servers) {
+                        if (s && s->get_id() == id) {
+                            spdlog::info("Forwarding data connection to GrayServer {}", id);
+                            s->handle_new_data(sock, otp);
+                            return;
+                        }
                     }
                 }
+                else {
+                    spdlog::warn("Received data packet for unknown server ID: {}", id);
+                    asio::error_code ignored;
+                    sock->close(ignored);
+                }
             }
-            else {
-                spdlog::warn("Received data packet for unknown server ID: {}", id);
-                asio::error_code ignored;
-                sock->close(ignored);
-            }
+            
         });
 }
 //
@@ -197,7 +198,7 @@ void ServerManager::async_accept_control() {
 
     control_acceptor->async_accept(ssl_sock->lowest_layer(),
         [self, ssl_sock](const asio::error_code& ec) {
-            if (!self->running.load()) return;
+            if (!self->running) return;
 
             if (!ec) {
                 ssl_sock->async_handshake(asio::ssl::stream_base::server,
@@ -225,17 +226,16 @@ asio::awaitable<void> ServerManager::async_authorize(std::shared_ptr<asio::ssl::
 {
     auto self = shared_from_this();
     try {
-        // 1. Handshake
-        co_await ssl_sock->async_handshake(asio::ssl::stream_base::server, asio::use_awaitable);
+        
 
-        // 2. Wait for request
+        //  Wait for request
         struct { uint32_t id; uint32_t pool_size; } req;
         co_await asio::async_read(*ssl_sock, asio::buffer(&req, sizeof(req)), asio::use_awaitable);
 
         uint32_t id = ntohl(req.id);
         uint32_t pool_size = ntohl(req.pool_size);
 
-        // 3. Check authorization
+        //  Check authorization
         if (auto shared_data = data_servers.lock())
         {
             if (shared_data->authorize_id(id)) {
@@ -246,11 +246,11 @@ asio::awaitable<void> ServerManager::async_authorize(std::shared_ptr<asio::ssl::
                     p, data_port, pool_size, self
                 );
 
-                // 5. Send response with ports
+                //  Send response with ports
                 uint32_t resp[] = { htonl(id), htonl(p), htonl(data_port) };
                 co_await asio::async_write(*ssl_sock, asio::buffer(resp), asio::use_awaitable);
 
-                // 6. Add to manager and start
+                // Add to manager and start
                 self->add(server);
                 server->start();
 
