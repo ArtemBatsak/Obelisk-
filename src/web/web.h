@@ -12,7 +12,7 @@
 #include "manager/Data.h"
 #include "manager/Server_manager.h"
 #include "tls/tls_session.h"
-#include "manager/Setup_Wizard.h"
+#include "manager/Setup_wizard.h"
 
 
 struct ProxyServerInfo {

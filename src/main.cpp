@@ -19,7 +19,7 @@
 #include "manager/Server_manager.h"
 #include "logger/logger.h"
 #include "web/web.h"
-#include "manager/Setup_Wizard.h"
+#include "manager/Setup_wizard.h"
 
 auto running = std::make_shared<std::atomic<bool>>(true);
 
