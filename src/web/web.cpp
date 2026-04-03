@@ -3,23 +3,132 @@
 
 using json = nlohmann::json;
 
+std::string base64_decode(const std::string& in) {
+	static const std::string table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	std::vector<int> T(256, -1);
+	for (int i = 0; i < 64; i++) T[table[i]] = i;
+
+	int val = 0, valb = -8;
+	std::string out;
+	for (unsigned char c : in) {
+		if (T[c] == -1) break;
+		val = (val << 6) + T[c];
+		valb += 6;
+		if (valb >= 0) {
+			out.push_back(char((val >> valb) & 0xFF));
+			valb -= 8;
+		}
+	}
+	return out;
+}
 
 
 WebAdmin::~WebAdmin() {
 	stop();
+
 }
 
+void WebAdmin::setup_tls_in_memory() {
+	auto pem = generate_self_signed_cert_pem();
+	this->mem_key = pem.first;
+	this->mem_cert = pem.second;
+	if (mem_key.empty() || mem_cert.empty()) {
+
+		spdlog::error("WebAdmin: Failed to generate in-memory TLS cert/key!");
+		return;
+	}
+
+	// Check the beginning of the PEM strings to ensure they look correct (for debugging)
+	//spdlog::info("Key start: {}", mem_key.substr(0, 25));
+	//spdlog::info("Cert start: {}", mem_cert.substr(0, 25));
+
+	if (mem_key.find("BEGIN RSA PRIVATE KEY") == std::string::npos &&
+		mem_key.find("BEGIN PRIVATE KEY") == std::string::npos) {
+		spdlog::error("WebAdmin: Generated key PEM does not look correct!");
+	}
+}
+
+
+
+void WebAdmin::apply_auth_middleware() {
+	spdlog::info("WebAdmin: Setting up authentication middleware...");
+	
+	svr->set_pre_routing_handler([this](const httplib::Request& req, httplib::Response& res) {
+
+		// Check for Authorization header
+		if (req.has_header("Authorization")) {
+			std::string auth = req.get_header_value("Authorization"); // "Basic YWRtaW46MTIz"
+
+			// Check if it starts with "Basic "
+			std::string base64_part = auth.substr(6);
+			spdlog::info("WebAdmin: Received Authorization header: {}", auth);
+			
+			std::string decoded = base64_decode(base64_part);
+
+			// The decoded string should be in the format "username:password"
+			size_t sep = decoded.find(':');
+			if (sep != std::string::npos) {
+				std::string user = decoded.substr(0, sep);
+				std::string pass = decoded.substr(sep + 1);
+				spdlog::info("WebAdmin: Received auth attempt with user '{}'", user);
+				// Verify credentials using ConfigManager
+				if (this->web_wizard->verify_password(user,pass)) {
+					
+					return httplib::Server::HandlerResponse::Unhandled; 
+				}
+			}
+		}
+
+		
+		res.status = 401;
+		res.set_header("WWW-Authenticate", "Basic realm=\"Admin Panel\"");
+		res.set_content("Access denied", "text/plain");
+		return httplib::Server::HandlerResponse::Handled;
+		});
+}
 void WebAdmin::start() {
-	httplib::Server svr;
-	m_running = true;
+	if (m_running) return;
+
+	setup_tls_in_memory();
+	// Somthing went wrong with in-memory cert generation
+	// We can`t start server without certs, so we will try to write them to temp files and load from there
+	// After loading, we can delete these files, because SSLServer should have loaded the certs into memory
+	std::string cert_path = "web_admin.crt";
+	std::string key_path = "web_admin.key";
+
+	try {
+		std::ofstream cert_file(cert_path, std::ios::binary);
+		cert_file << mem_cert;
+		cert_file.close();
+
+		std::ofstream key_file(key_path, std::ios::binary);
+		key_file << mem_key;
+		key_file.close();
+	}
+	catch (const std::exception& e) {
+		spdlog::error("WebAdmin: Failed to write temp SSL files: {}", e.what());
+		return;
+	}
+
+	svr = std::make_unique<httplib::SSLServer>(cert_path.c_str(), key_path.c_str());
+
+	if (!svr->is_valid()) {
+		spdlog::error("WebAdmin: SSL Server is NOT valid even from temporary files!");
+		std::filesystem::remove(cert_path);
+		std::filesystem::remove(key_path);
+		return;
+	}
+
+	spdlog::info("WebAdmin: SSL Server initialized successfully with in-memory certs!");
+	apply_auth_middleware();
 
 	// ---Statick---
-	svr.Get("/", [](const httplib::Request&, httplib::Response& res) {
+	svr->Get("/", [](const httplib::Request&, httplib::Response& res) {
 		res.set_content(INDEX_HTML, "text/html; charset=utf-8");
 		});
 
 	// --- API: get all servers ---
-	svr.Get("/api/servers", [this](const httplib::Request&, httplib::Response& res) {
+	svr->Get("/api/servers", [this](const httplib::Request&, httplib::Response& res) {
 
 		auto servers = web_data_servers->get_servers();
 
@@ -48,7 +157,7 @@ void WebAdmin::start() {
 		});
 
 	// --- API: Logs ---
-	svr.Get("/api/logs", [](const httplib::Request&, httplib::Response& res) {
+	svr->Get("/api/logs", [](const httplib::Request&, httplib::Response& res) {
 		std::string log_path = "logs/obelisk.log";
 		std::string content = "";
 
@@ -76,7 +185,7 @@ void WebAdmin::start() {
 		});
 
 	// --- API: delete server ---
-	svr.Post("/api/server/delete", [this](const httplib::Request& req, httplib::Response& res) {
+	svr->Post("/api/server/delete", [this](const httplib::Request& req, httplib::Response& res) {
 		try {
 			auto j = json::parse(req.body);
 			bool success = web_data_servers->deleteServerById(j.at("id").get<uint32_t>());
@@ -86,7 +195,7 @@ void WebAdmin::start() {
 		});
 
 	// --- API: change comment ---
-	svr.Post("/api/server/change_comment", [this](const httplib::Request& req, httplib::Response& res) {
+	svr->Post("/api/server/change_comment", [this](const httplib::Request& req, httplib::Response& res) {
 		try {
 			auto j = json::parse(req.body);
 			bool success = web_data_servers->updateServerComment(j.at("id").get<uint32_t>(), j.at("comment").get<std::string>());
@@ -96,7 +205,7 @@ void WebAdmin::start() {
 		});
 
 	// --- API: add server ---
-	svr.Post("/api/server/add", [this](const httplib::Request& req, httplib::Response& res) {
+	svr->Post("/api/server/add", [this](const httplib::Request& req, httplib::Response& res) {
 		try {
 			auto j = json::parse(req.body);
 			bool success = web_data_servers->add_id(j.at("comment").get<std::string>());
@@ -107,7 +216,7 @@ void WebAdmin::start() {
 
 	// --- API: stop server ---
 	// We can stop server, but we can`t start it again
-	svr.Post("/api/server/stop", [this](const httplib::Request& req, httplib::Response& res) {
+	svr->Post("/api/server/stop", [this](const httplib::Request& req, httplib::Response& res) {
 		try {
 			auto j = json::parse(req.body);
 			bool success = web_server_manager->shutdown_id(j.at("id").get<uint32_t>());
@@ -116,7 +225,7 @@ void WebAdmin::start() {
 		catch (...) { res.status = 400; }
 		});
 
-	svr.Post("/api/ports/add", [this](const httplib::Request& req, httplib::Response& res) {
+	svr->Post("/api/ports/add", [this](const httplib::Request& req, httplib::Response& res) {
 		try {
 			auto j = nlohmann::json::parse(req.body);
 
@@ -138,19 +247,16 @@ void WebAdmin::start() {
 			res.status = 500;
 		}
 		});
-	std::cout << ">>> Admin panel started at http://localhost:" << port_ << std::endl;
+	spdlog::info("Admin panel started at https://localhost:{}", port_);
 	m_running = true;
-	svr.listen("0.0.0.0", port_);
+	svr->listen("0.0.0.0", port_);
 }
 
 void WebAdmin::stop() {
 	if (m_running) {
 		m_running = false;
-		svr_.stop();  
+		svr->stop();
 		spdlog::info("Admin panel stopped");
 	}
 	
 }
-
-
-

@@ -19,16 +19,15 @@
 #include "manager/Server_manager.h"
 #include "logger/logger.h"
 #include "web/web.h"
+#include "manager/Setup_Wizard.h"
 
-int WEB_PORT = 8000;
 auto running = std::make_shared<std::atomic<bool>>(true);
-const int CONTROL_PORT = 44555;
-const int DATA_PORT = 50021;
 
-struct Ports {
-    uint32_t data_port;
-    uint32_t client_port;
-};
+int CONTROL_PORT;
+int DATA_PORT;
+int WEB_PORT;
+
+
 
 
 int main()
@@ -37,9 +36,19 @@ int main()
     {
         init_logging();
         spdlog::info("Obelisk started");
-
+		// --- Configuration ---
+		auto wizard = std::make_shared<ConfigManager>();
+		if (!wizard->check_config())
+        {
+            spdlog::info("No config file found. Starting setup wizard...");
+            wizard->set_up();
+        }
+		auto config = wizard->get_config();
+		CONTROL_PORT = config.control_port;
+		DATA_PORT = config.data_port;
+		WEB_PORT = config.web_port;
+		// --- Server Manager ---
         asio::io_context io;
-        
         auto data_servers = std::make_shared<DataServers>();
         auto server_manager = std::make_shared<ServerManager>(
             running,
@@ -49,8 +58,9 @@ int main()
             io.get_executor()
         );
 		server_manager->start();
+
         // --- Web Admin ---
-        WebAdmin admin(data_servers, server_manager, WEB_PORT);
+        WebAdmin admin(data_servers, server_manager, wizard, WEB_PORT);
 
         std::thread web_thread([&admin]()
             {

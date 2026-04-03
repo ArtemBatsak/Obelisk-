@@ -1,14 +1,19 @@
 ﻿#pragma once
+#define CPPHTTPLIB_OPENSSL_SUPPORT
+#include <httplib.h>
 
 #include <string>
 #include <vector>
-#include "httplib.h"
+#include <memory>
 #include <nlohmann/json.hpp>
+#include <filesystem>
 #include <iostream>
 #include <fstream>
-#include <filesystem>
 #include "manager/Data.h"
 #include "manager/Server_manager.h"
+#include "tls/tls_session.h"
+#include "manager/Setup_Wizard.h"
+
 
 struct ProxyServerInfo {
     int id;
@@ -19,28 +24,44 @@ struct ProxyServerInfo {
     bool online;
 };
 
-class WebAdmin {
+class WebAdmin{
 public:
     WebAdmin(std::shared_ptr<DataServers> ds,
-        std::shared_ptr<ServerManager> sm,
-        int port)
+             std::shared_ptr<ServerManager> sm,
+		     std::shared_ptr<ConfigManager> wi,
+             int port)
         : web_data_servers(std::move(ds)),
-        web_server_manager(std::move(sm)),
-        port_(port)
+          web_server_manager(std::move(sm)),
+		  web_wizard(std::move(wi)),
+          port_(port),
+          m_running(false)
     {
+        setup_tls_in_memory();
     }
-	~WebAdmin();
 
-    
-    void start();
-    void stop();
+  ~WebAdmin();
+
+  void start();
+  void stop();
 
 private:
+    
     bool m_running;
+    int port_;
     std::shared_ptr<DataServers> web_data_servers;
     std::shared_ptr<ServerManager> web_server_manager;
-    int port_;
-    httplib::Server svr_;
+	std::shared_ptr<ConfigManager> web_wizard;
+    std::string mem_cert;
+    std::string mem_key;
+    std::unique_ptr<httplib::SSLServer> svr;
+
+	// Simple hardcoded credentials (for demonstration purposes only)
+    std::string admin_user = "admin";
+    std::string admin_pass = "admin12345";
+
+    // Вспомогательные методы
+    void apply_auth_middleware();
+    void setup_tls_in_memory(); // Метод для проверки/генерации файлов сертификата
 };
 
 

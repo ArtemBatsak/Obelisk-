@@ -6,7 +6,10 @@
     "spdlog",
     "asio",
     "openssl",
-    "cpp-httplib",
+    {
+      "name": "cpp-httplib",
+      "features": [ "openssl" ]
+    },
     "nlohmann-json"
   ]
 }
