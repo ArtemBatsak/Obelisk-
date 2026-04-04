@@ -169,9 +169,10 @@ void ServerManager::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock)
             uint32_t otp = ntohl(buf->otp);
             spdlog::info("Received data packet for server ID: {}, OTP: {}", id, otp);
             { 
-                std::lock_guard<std::mutex> lock(self->mtx_);
+                
                 if (self->server_online(id)) {
 
+                    std::lock_guard<std::mutex> lock(self->mtx_);
                     for (auto& s : self->servers) {
                         if (s && s->get_id() == id) {
                             spdlog::info("Forwarding data connection to GrayServer {}", id);
