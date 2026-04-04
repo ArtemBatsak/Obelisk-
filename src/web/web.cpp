@@ -51,7 +51,7 @@ void WebAdmin::setup_tls_in_memory() {
 
 
 void WebAdmin::apply_auth_middleware() {
-	spdlog::info("WebAdmin: Setting up authentication middleware...");
+	
 	
 	svr->set_pre_routing_handler([this](const httplib::Request& req, httplib::Response& res) {
 
@@ -61,7 +61,7 @@ void WebAdmin::apply_auth_middleware() {
 
 			// Check if it starts with "Basic "
 			std::string base64_part = auth.substr(6);
-			spdlog::info("WebAdmin: Received Authorization header: {}", auth);
+			
 			
 			std::string decoded = base64_decode(base64_part);
 
@@ -70,7 +70,6 @@ void WebAdmin::apply_auth_middleware() {
 			if (sep != std::string::npos) {
 				std::string user = decoded.substr(0, sep);
 				std::string pass = decoded.substr(sep + 1);
-				spdlog::info("WebAdmin: Received auth attempt with user '{}'", user);
 				// Verify credentials using ConfigManager
 				if (this->web_wizard->verify_password(user,pass)) {
 					
