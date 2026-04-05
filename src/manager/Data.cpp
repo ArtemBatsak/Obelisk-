@@ -93,35 +93,27 @@ int DataServers::gen_id() {
 
 bool DataServers::deleteServerById(uint32_t id)
 { 	
-	{
-		std::lock_guard<std::mutex> lock(mtx_);
-		for (auto it = servers_id.begin(); it != servers_id.end(); ++it) {
-			if (it->id == id) {
-				ports.insert(it->client_port);
-				servers_id.erase(it);
-				goto saved;
-			}
-		}
-	}
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (auto it = servers_id.begin(); it != servers_id.end(); ++it) {
+        if (it->id == id) {
+            ports.insert(it->client_port);
+            servers_id.erase(it);
+			save_all();
+			return true;
+        }
+    }
 	spdlog::error("Error: server with ID {} not found!", id);
 	return false;
-
-saved:
-	save_all();
-	spdlog::info("Server with ID deleted: {}", id);
-    return true;
 }
 
 bool DataServers::updateServerComment(uint32_t id, const std::string& new_comment)
 {
+    std::lock_guard<std::mutex> lock(mtx_);
 	bool found = false;
-    {
-        std::lock_guard<std::mutex> lock(mtx_);
-        for (auto& s : servers_id) {
-            if (s.id == id) {
-                s.comment = new_comment;
-				found = true;
-            }
+    for (auto& s : servers_id) {
+        if (s.id == id) {
+            s.comment = new_comment;
+            found = true;
         }
     }
     if (found)
@@ -138,75 +130,63 @@ bool DataServers::updateServerComment(uint32_t id, const std::string& new_commen
 }
 
 bool DataServers::add_id(const std::string comment_) {
-    int client_port_;
+    std::lock_guard<std::mutex> lock(mtx_);
+    int selected_port = -1;
     int new_id;
 
-    {
-        std::lock_guard<std::mutex> lock(mtx_);
-
-        
-        if (ports.size() < 1) {
-            spdlog::error("Error: not enough free ports available for a new server!");
-            return false;
-        }
-
-        auto it = ports.begin();
-        client_port_ = *it;
-        ports.erase(it); 
-
-
-        new_id = gen_id(); 
-        Server_struct entry;
-        entry.id = new_id;
-        entry.client_port = client_port_;
-        entry.comment = comment_;
-
-        servers_id.push_back(entry);
+    if (ports.size() < 1) {
+        spdlog::error("Error: not enough free ports available for a new server!");
+        return false;
     }
+	
+    auto it = ports.begin();
+    while (it != ports.end()) {
+        int candidate = *it;
 
+        it = ports.erase(it);
+
+        if (is_port_available(candidate)) {
+            selected_port = candidate;
+            break;
+        }
+    }
     
+
+    new_id = gen_id();
+    Server_struct entry;
+    entry.id = new_id;
+    entry.client_port = selected_port;
+    entry.comment = comment_;
+
+    servers_id.push_back(entry);
     save_all();
-
     
-    spdlog::info("Server created with ID {}, client_port={}", new_id, client_port_);
+    spdlog::info("Server created with ID {}, client_port={}", new_id, selected_port);
 
     return true;
 }
 
-void DataServers::show_id() const {
-    std::lock_guard<std::mutex> lock(mtx_);
-    spdlog::info("\n=== Logs ===");
-    for (const auto& l : servers_id) {
-        spdlog::info("ID: {} | Client: {} | Comment: {}", l.id, l.client_port, l.comment);
-    }
-}
-
 void DataServers::save_all() {
-    std::lock_guard<std::mutex> lock(mtx_);
-    {
-        std::ofstream outfile(id_file, std::ios::trunc);
-        if (!outfile.is_open()) {
-            spdlog::error("Error: cannot open {} for writing!", id_file);
-        }
-        else {
-            for (const auto& entry : servers_id) {
-                outfile << entry.to_string() << "\n";
-            }
+    std::ofstream outfile_id(id_file, std::ios::trunc);
+    if (!outfile_id.is_open()) {
+        spdlog::error("Error: cannot open {} for writing!", id_file);
+    }
+    else {
+        for (const auto& entry : servers_id) {
+            outfile_id << entry.to_string() << "\n";
         }
     }
 
-    {
-        std::ofstream outfile(port_file, std::ios::trunc);
-        if (!outfile.is_open()) {
-            spdlog::error("Error: cannot open {} for writing!", port_file);
-        }
-        else {
-            for (int port : ports) {
-                outfile << port << "\n";
-            }
+
+    std::ofstream outfile_port(port_file, std::ios::trunc);
+    if (!outfile_port.is_open()) {
+        spdlog::error("Error: cannot open {} for writing!", port_file);
+    }
+    else {
+        for (int port : ports) {
+            outfile_port << port << "\n";
         }
     }
-
     spdlog::info("Servers and ports state saved.");
 }
 
@@ -247,9 +227,9 @@ bool DataServers::add_ports(int first, int second) {
         spdlog::warn("Range {}-{} is out of valid bounds", start, end);
         return false;
     }
+
     {
         std::lock_guard<std::mutex> lock(mtx_);
-
         for (int i = start; i <= end; ++i) {
 
             auto result = ports.insert(i);
@@ -260,17 +240,95 @@ bool DataServers::add_ports(int first, int second) {
                 spdlog::debug("Port {} already exists in the pool", i);
             }
         }
+
+
+        if (changed) {
+            save_all();
+            if (start == end) {
+                spdlog::info("Port {} added to the free pool.", start);
+            }
+            else {
+                spdlog::info("Ports from {} to {} added to the free pool.", start, end);
+            }
+        }
     }
-   
-    if (changed) {
-		save_all();
-        if (start == end) {
-            spdlog::info("Port {} added to the free pool.", start);
-        }
-        else {
-            spdlog::info("Ports from {} to {} added to the free pool.", start, end);
-        }
+    return true;
+}
+
+bool DataServers::delete_port(int first, int second) {
+    int start = first;
+    int end = (second == 0) ? first : second;
+    if (start > end) std::swap(start, end);
+
+    std::lock_guard<std::mutex> lock(mtx_);
+
+    size_t size_before = ports.size();
+
+    if (start == end) {
+        ports.erase(start);
+    }
+    else {
+        auto it_start = ports.lower_bound(start);
+        auto it_end = ports.upper_bound(end);
+        ports.erase(it_start, it_end);
     }
 
-    return true;
+    if (ports.size() != size_before) {
+		save_all();
+        spdlog::info("Ports from {} to {} removed from pool.", start, end);
+        return true;
+    }
+
+	spdlog::warn("No ports from {} to {} were found in the pool.", start, end);
+    return false; 
+}
+
+bool DataServers::is_port_available(int port) {
+    asio::io_context ioc; 
+    asio::ip::tcp::acceptor acceptor(ioc);
+    asio::error_code ec;
+
+    acceptor.open(asio::ip::tcp::v4(), ec);
+    if (ec) return false;
+
+    acceptor.bind({ asio::ip::tcp::v4(), static_cast<unsigned short>(port) }, ec);
+
+    return !ec;
+}
+
+std::string DataServers::get_port_pool() const {
+    std::lock_guard<std::mutex> lock(mtx_);
+
+    nlohmann::json j;
+
+    if (ports.empty()) {
+        j["status"] = "empty";
+        j["ranges"] = "";
+        return j.dump();
+    }
+
+    std::string ranges_str;
+    int start = *ports.begin();
+    int last = start;
+
+    auto add_range = [&](int s, int l) {
+        if (!ranges_str.empty()) ranges_str += ", ";
+        if (s == l) ranges_str += std::to_string(s);
+        else ranges_str += std::to_string(s) + "-" + std::to_string(l);
+        };
+
+    for (auto it = std::next(ports.begin()); it != ports.end(); ++it) {
+        if (*it != last + 1) {
+            add_range(start, last);
+            start = *it;
+        }
+        last = *it;
+    }
+    add_range(start, last);
+
+    j["status"] = "success";
+    j["count"] = ports.size();
+    j["ranges"] = ranges_str;
+
+    return j.dump();
 }

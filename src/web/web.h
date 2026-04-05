@@ -55,13 +55,8 @@ private:
     std::string mem_key;
     std::unique_ptr<httplib::SSLServer> svr;
 
-	// Simple hardcoded credentials (for demonstration purposes only)
-    std::string admin_user = "admin";
-    std::string admin_pass = "admin12345";
-
-    // Вспомогательные методы
     void apply_auth_middleware();
-    void setup_tls_in_memory(); // Метод для проверки/генерации файлов сертификата
+    void setup_tls_in_memory();
 };
 
 
@@ -87,6 +82,7 @@ static const std::string INDEX_HTML = R"raw(
             --accent: #2e7dff;
             --danger: #ff4444;
             --warning: #ffaa00;
+            --success: #00ff66;
             --text: #e0e0e0;
             --text-dim: #999;
             --terminal-bg: #0a0a0a;
@@ -145,7 +141,7 @@ static const std::string INDEX_HTML = R"raw(
         }
 
         .indicator { width: 10px; height: 10px; border-radius: 50%; margin-right: 15px; box-shadow: 0 0 8px currentColor; }
-        .online { color: #00ff66; background: currentColor; }
+        .online { color: var(--success); background: currentColor; }
         .offline { color: #555; background: currentColor; }
 
         .server-name { font-size: 18px; font-weight: bold; color: var(--accent); display: block; margin-bottom: 2px; }
@@ -190,11 +186,6 @@ static const std::string INDEX_HTML = R"raw(
             padding: 10px;
         }
 
-        .log-date { color: #666 !important; }
-        .log-info { color: #00ff66 !important; font-weight: bold; }
-        .log-error { color: #ff4444 !important; font-weight: bold; }
-        .log-warn { color: #ffaa00 !important; font-weight: bold; }
-        .log-debug { color: #2e7dff !important; font-weight: bold; }
         .log-msg { color: #ffffff !important; }
 
         .modal {
@@ -206,6 +197,7 @@ static const std::string INDEX_HTML = R"raw(
         input { width: 100%; padding: 10px; margin: 15px 0; background: #252525; border: 1px solid #444; color: white; border-radius: 4px; box-sizing: border-box; }
         
         .port-range-inputs { display: flex; align-items: center; gap: 10px; }
+        .port-pool-view { background: #000; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 13px; max-height: 150px; overflow-y: auto; margin: 10px 0; border: 1px solid #333; color: var(--success); }
     </style>
 </head>
 <body>
@@ -224,8 +216,18 @@ static const std::string INDEX_HTML = R"raw(
     <div class="modal-content">
         <h3 style="margin-top:0">Management</h3>
         <button class="primary-btn" onclick="triggerAddClient()">👤 Add Client (Server)</button>
-        <button class="primary-btn" onclick="triggerManagePorts()">🔌 Manage Ports Pool</button>
+        <button class="primary-btn" onclick="triggerManagePorts()">🔌 Add Ports to Pool</button>
+        <button class="primary-btn" style="background: #444;" onclick="triggerViewPorts()">📋 View Free Ports</button>
+        <button class="primary-btn" style="background: #500;" onclick="triggerDeletePorts()">❌ Delete Ports</button>
         <button class="delete" style="width:100%; margin-top: 10px;" onclick="closeManageModal()">Close</button>
+    </div>
+</div>
+
+<div class="modal" id="viewPortsModal">
+    <div class="modal-content" style="width: 400px;">
+        <h3 style="margin-top:0">Free Ports Pool</h3>
+        <div id="portsListContent" class="port-pool-view">Loading...</div>
+        <button class="primary-btn" onclick="closeViewPortsModal()">Close</button>
     </div>
 </div>
 
@@ -239,9 +241,8 @@ static const std::string INDEX_HTML = R"raw(
 
 <div class="modal" id="portsModal">
     <div class="modal-content">
-        <h3 style="margin-top:0">Add Free Ports</h3>
+        <h3 id="portsModalTitle" style="margin-top:0">Add Free Ports</h3>
         <p class="small" style="color: var(--text-dim); margin-bottom: 5px;">Enter a single port or a range.</p>
-        <p class="small" style="color: var(--warning); margin-bottom: 15px;">Allowed: 1025 - 65535</p>
         
         <div class="port-range-inputs">
             <input id="portFirst" type="number" placeholder="From" min="1025" max="65535">
@@ -250,7 +251,7 @@ static const std::string INDEX_HTML = R"raw(
         </div>
         
         <div style="display: flex; gap: 10px; margin-top: 10px;">
-            <button class="edit" style="flex: 1; background:var(--accent); color:white" onclick="submitPorts()">Add Range</button>
+            <button id="portSubmitBtn" class="edit" style="flex: 1; background:var(--accent); color:white" onclick="submitPorts()">Add Range</button>
             <button class="delete" style="flex: 1" onclick="closePortsModal()">Cancel</button>
         </div>
     </div>
@@ -272,14 +273,8 @@ let currentEditId = null;
 let consoleActive = false;
 let consoleInterval = null;
 
-// --- Новые функции для управления модальным окном Manage ---
-function openManageModal() {
-    document.getElementById("manageModal").style.display = "flex";
-}
-
-function closeManageModal() {
-    document.getElementById("manageModal").style.display = "none";
-}
+function openManageModal() { document.getElementById("manageModal").style.display = "flex"; }
+function closeManageModal() { document.getElementById("manageModal").style.display = "none"; }
 
 function triggerAddClient() {
     closeManageModal();
@@ -288,9 +283,28 @@ function triggerAddClient() {
 
 function triggerManagePorts() {
     closeManageModal();
-    openPortsModal();
+    document.getElementById("portsModalTitle").innerText = "Add Free Ports";
+    const btn = document.getElementById("portSubmitBtn");
+    btn.innerText = "Add Range";
+    btn.style.background = "var(--accent)";
+    btn.onclick = submitPorts;
+    document.getElementById("portsModal").style.display = "flex";
 }
-// ---------------------------------------------------------
+
+function triggerDeletePorts() {
+    closeManageModal();
+    document.getElementById("portsModalTitle").innerText = "Delete Ports";
+    const btn = document.getElementById("portSubmitBtn");
+    btn.innerText = "Delete Range";
+    btn.style.background = "var(--danger)";
+    btn.onclick = submitDeletePorts;
+    document.getElementById("portsModal").style.display = "flex";
+}
+
+function triggerViewPorts() {
+    closeManageModal();
+    openViewPortsModal();
+}
 
 async function api(path, body = null) {
     try {
@@ -301,8 +315,7 @@ async function api(path, body = null) {
         if (body) options.body = JSON.stringify(body);
         const res = await fetch(path, options);
         if (!res.ok) return { status: "error" };
-        const data = await res.json();
-        return data;
+        return await res.json();
     } catch (e) {
         return { status: "error" };
     }
@@ -336,6 +349,55 @@ async function loadServers() {
     });
 }
 
+
+async function openViewPortsModal() {
+    const modal = document.getElementById("viewPortsModal");
+    const content = document.getElementById("portsListContent");
+    modal.style.display = "flex";
+    content.innerHTML = "Fetching...";
+
+    const data = await api("/api/ports/list");
+    if (data.status === "success" || data.status === "empty") {
+        content.innerHTML = `
+            <div style="color:var(--accent); margin-bottom:5px;">Total unique ports: ${data.count || 0}</div>
+            <div style="color:var(--text)">Ranges: ${data.ranges || 'Pool is empty'}</div>
+        `;
+    } else {
+        content.innerHTML = "Error loading pool.";
+    }
+}
+
+function closeViewPortsModal() { document.getElementById("viewPortsModal").style.display = "none"; }
+
+function closePortsModal() { 
+    document.getElementById("portsModal").style.display = "none"; 
+    document.getElementById("portFirst").value = "";
+    document.getElementById("portSecond").value = "";
+}
+
+async function submitPorts() {
+    const f = document.getElementById("portFirst").value;
+    const s = document.getElementById("portSecond").value;
+    if (!f) return alert("Enter port!");
+    const res = await api("/api/ports/add", { first: parseInt(f), second: s ? parseInt(s) : 0 });
+    if (res.status === "ok") { closePortsModal(); alert("Ports added!"); }
+    else alert("Error adding ports");
+}
+
+async function submitDeletePorts() {
+    const f = document.getElementById("portFirst").value;
+    const s = document.getElementById("portSecond").value;
+    if (!f) return alert("Enter port!");
+    
+    if(!confirm("Are you sure you want to delete these ports?")) return;
+
+    const res = await api("/api/ports/delete", { first: parseInt(f), second: s ? parseInt(s) : 0 });
+    if (res.status === "ok") { closePortsModal(); alert("Ports deleted!"); }
+    else alert("Ports not found in pool.");
+}
+
+// --- Остальные функции ---
+
 async function stopServer(id) {
     if (confirm(`Stop server ID: ${id}?`)) {
         const res = await api("/api/server/stop", { id });
@@ -368,22 +430,6 @@ function toggleConsole() {
     } else {
         clearInterval(consoleInterval);
     }
-}
-
-function openPortsModal() {
-    document.getElementById("portFirst").value = "";
-    document.getElementById("portSecond").value = "";
-    document.getElementById("portsModal").style.display = "flex";
-}
-
-function closePortsModal() { document.getElementById("portsModal").style.display = "none"; }
-
-async function submitPorts() {
-    const f = document.getElementById("portFirst").value;
-    const s = document.getElementById("portSecond").value;
-    if (!f) return alert("Enter port!");
-    const res = await api("/api/ports/add", { first: parseInt(f), second: s ? parseInt(s) : 0 });
-    if (res.status === "ok") { closePortsModal(); alert("Ports added!"); }
 }
 
 function openAddModal() {

@@ -87,7 +87,6 @@ uint32_t ServerManager::get_active_pairs(uint32_t id) {
     }
     return -1;
 }
-//===================================================
 
 void ServerManager::start_up_tls() {
     auto self = shared_from_this();
@@ -109,14 +108,14 @@ void ServerManager::start_up_tls() {
 
   
 }
-//===================================================
+
 void ServerManager::init_acceptor() {
     control_acceptor = std::make_shared<tcp::acceptor>(io_context_, tcp::endpoint(tcp::v4(), control_port));
     data_acceptor = std::make_shared<tcp::acceptor>(io_context_, tcp::endpoint(tcp::v4(), data_port));
     spdlog::info("Data acceptor started on port {}", data_port);
     spdlog::info("Control acceptor started on port {}", control_port);
 }
-//===================================================
+
 void ServerManager::async_accept_data() {
     auto self = shared_from_this();
     if (!running) return;
@@ -190,7 +189,7 @@ void ServerManager::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock)
             
         });
 }
-//
+
 void ServerManager::async_accept_control() {
     auto self = shared_from_this();
 
@@ -222,7 +221,7 @@ void ServerManager::async_accept_control() {
             self->async_accept_control();
         });
 }
-//===========
+
 asio::awaitable<void> ServerManager::async_authorize(std::shared_ptr<asio::ssl::stream<tcp::socket>> ssl_sock)
 {
     auto self = shared_from_this();
@@ -271,3 +270,4 @@ asio::awaitable<void> ServerManager::async_authorize(std::shared_ptr<asio::ssl::
         ssl_sock->lowest_layer().close(ec);
     }
 }
+

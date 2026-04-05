@@ -10,12 +10,13 @@
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <set>
-
+#include "asio.hpp"
+#include <nlohmann/json.hpp>
 // Data structure for server information + functions to convert to/from string for file storage
 struct Server_struct {
-    int id;
-    int client_port;
-    std::string comment;
+    int id=0;
+    int client_port=0;
+    std::string comment="0";
 
     std::string to_string() const;
     static Server_struct from_string(const std::string& line);
@@ -34,15 +35,12 @@ private:
     void read_id();
     void read_ports();
     int gen_id();
-
-public:
-    DataServers();
-
-    bool add_id(const std::string comment_);
-    void show_id() const;
     void save_all();
-
-
+    bool is_port_available(int port);
+public:
+	
+    DataServers();
+    bool add_id(const std::string comment_);
     bool deleteServerById(uint32_t id);
 	bool updateServerComment(uint32_t id, const std::string& new_comment);
 
@@ -50,5 +48,7 @@ public:
     int get_ports_by_id(int search_id) const;
     std::vector<Server_struct>  get_servers();
 	bool add_ports(int first, int second = 0);
+    bool delete_port(int first, int second = 0);
+	std::string get_port_pool() const;
 
 };

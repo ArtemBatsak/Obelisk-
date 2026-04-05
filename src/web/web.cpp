@@ -48,8 +48,6 @@ void WebAdmin::setup_tls_in_memory() {
 	}
 }
 
-
-
 void WebAdmin::apply_auth_middleware() {
 	
 	
@@ -85,6 +83,7 @@ void WebAdmin::apply_auth_middleware() {
 		return httplib::Server::HandlerResponse::Handled;
 		});
 }
+
 void WebAdmin::start() {
 	if (m_running) return;
 
@@ -224,6 +223,22 @@ void WebAdmin::start() {
 		catch (...) { res.status = 400; }
 		});
 
+	svr->Get("/api/ports/list", [this](const httplib::Request& req, httplib::Response& res) {
+		res.set_content(web_data_servers->get_port_pool(), "application/json");
+		});
+
+	svr->Post("/api/ports/delete", [this](const httplib::Request& req, httplib::Response& res) {
+		try {
+			auto j = json::parse(req.body);
+			int first = j.at("first").get<int>();
+			int second = j.contains("second") ? j.at("second").get<int>() : 0;
+
+			bool success = web_data_servers->delete_port(first, second);
+			res.set_content(json({ {"status", success ? "ok" : "error"} }).dump(), "application/json");
+		}
+		catch (...) { res.status = 400; }
+		});
+
 	svr->Post("/api/ports/add", [this](const httplib::Request& req, httplib::Response& res) {
 		try {
 			auto j = nlohmann::json::parse(req.body);
@@ -232,7 +247,7 @@ void WebAdmin::start() {
 			int first = j.at("first").get<int>();
 			int second = j.at("second").get<int>();
 
-			// Вызываем нашу крутую функцию с std::set
+			
 			bool success = web_data_servers->add_ports(first, second);
 
 			res.set_content(nlohmann::json({ {"status", success ? "ok" : "error"} }).dump(), "application/json");
@@ -246,6 +261,7 @@ void WebAdmin::start() {
 			res.status = 500;
 		}
 		});
+
 	spdlog::info("Admin panel started at https://localhost:{}", port_);
 	m_running = true;
 	svr->listen("0.0.0.0", port_);
