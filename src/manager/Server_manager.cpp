@@ -253,6 +253,7 @@ asio::awaitable<void> ServerManager::async_authorize(std::shared_ptr<asio::ssl::
                 // Add to manager and start
                 self->add(server);
                 server->start();
+                
 
 				spdlog::info("GrayServer {} authorized and started with pool size {}", id, pool_size);
             }

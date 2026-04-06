@@ -336,16 +336,15 @@ void GrayServer::async_accept_client() {
         });
 }
 
-uint64_t GrayServer::generate_id(std::shared_ptr<asio::ip::tcp::socket> sock) {
+std::string GrayServer::generate_id(std::shared_ptr<asio::ip::tcp::socket> sock) {
     auto endpoint = sock->remote_endpoint();
     auto ip = endpoint.address().to_string();
     auto port = std::to_string(endpoint.port());
 
-    ip.erase(std::remove(ip.begin(), ip.end(), '.'), ip.end());
 
-    std::string id_str = ip + port;
+    std::string id_str = ip + ":" + port;
 
-    return std::stoull(id_str);
+    return id_str;
 }
 
 void GrayServer::try_create_pair() {
@@ -373,70 +372,79 @@ void GrayServer::try_create_pair() {
         data_pool.erase(it);
     }
 
-    link_par pair;
-    pair.client_socket = client_sock;
-    pair.data_socket = data_sock;
-    pair.pair_id = generate_id(client_sock);
-    pair.done_count = 2;
+    auto pair = std::make_shared<link_par>();
+    pair->client_socket = client_sock;
+    pair->data_socket = data_sock;
+    pair->pair_id = generate_id(client_sock);
+    pair->done_count = 2;
+    pair->trafic_in = 0;
+    pair->trafic_out = 0;
 
     {
         std::lock_guard<std::mutex> lock(link_pool_mutex);
         link_pool.push_back(pair);
     }
 
-    splice_loop(client_sock, data_sock, pair.pair_id);
-    splice_loop(data_sock, client_sock, pair.pair_id);
+    splice_loop(client_sock, data_sock, pair, "in");
+    splice_loop(data_sock, client_sock, pair, "out");
 }
 
 void GrayServer::splice_loop(
     std::shared_ptr<asio::ip::tcp::socket> in_sock,
     std::shared_ptr<asio::ip::tcp::socket> out_sock,
-    uint64_t pair_id)
+    std::shared_ptr<link_par> pair,
+    std::string way)
 {
     auto self = shared_from_this();
     auto buffer = std::make_shared<std::array<char, 4096>>();
 
     in_sock->async_read_some(
         asio::buffer(*buffer),
-        [self, in_sock, out_sock, buffer, pair_id]
+        [self, in_sock, out_sock, buffer, pair,way]
         (const asio::error_code& ec, std::size_t bytes)
         {
             if (ec) {
-                // Логировать только отклонения от нормы (не логируем EOF)
                 if (ec != asio::error::eof &&
                     ec != asio::error::operation_aborted) {
-                    spdlog::error("Pair {}: read error (code {}): {}", pair_id, ec.value(), ec.message());
+                    spdlog::error("Pair {}: read error (code {}): {}", pair->pair_id, ec.value(), ec.message());
                 }
-                self->remove_pair(pair_id);
+                self->remove_pair(pair->pair_id);
                 return;
             }
 
             if (bytes == 0) {
-                // Нормальное завершение потока данных — не логируем
-                self->remove_pair(pair_id);
+                self->remove_pair(pair->pair_id);
                 return;
+            }
+            if (way == "in") {
+                pair->trafic_in += bytes; 
+                // spdlog::debug("Pair {}: total in: {}", pair->pair_id, pair->trafic_in.load());
+            }
+            else {
+                pair->trafic_out += bytes;
+                // spdlog::debug("Pair {}: total out: {}", pair->pair_id, pair->trafic_out.load());
             }
 
             asio::async_write(
                 *out_sock,
                 asio::buffer(buffer->data(), bytes),
-                [self, in_sock, out_sock, buffer, pair_id]
+                [self, in_sock, out_sock, buffer, pair,way]
                 (const asio::error_code& ec_write, std::size_t written)
                 {
                     if (ec_write) {
                         if (ec_write != asio::error::eof && ec_write != asio::error::operation_aborted) {
-                            spdlog::error("Pair {}: write error (code {}): {}", pair_id, ec_write.value(), ec_write.message());
+                            spdlog::error("Pair {}: write error (code {}): {}", pair->pair_id, ec_write.value(), ec_write.message());
                         }
-                        self->remove_pair(pair_id);
+                        self->remove_pair(pair->pair_id);
                         return;
                     }
 
-                    self->splice_loop(in_sock, out_sock, pair_id);
+                    self->splice_loop(in_sock, out_sock, pair,way);
                 });
         });
 }
 
-void GrayServer::remove_pair(uint64_t pair_id) {
+void GrayServer::remove_pair(std::string pair_id) {
 
     std::shared_ptr<asio::ip::tcp::socket> client_sock;
     std::shared_ptr<asio::ip::tcp::socket> data_sock;
@@ -444,12 +452,14 @@ void GrayServer::remove_pair(uint64_t pair_id) {
         std::lock_guard<std::mutex> lock(link_pool_mutex);
 
         auto it = std::find_if(link_pool.begin(), link_pool.end(),
-            [pair_id](const link_par& pair) { return pair.pair_id == pair_id; });
+            [&pair_id](const std::shared_ptr<link_par>& ptr) {
+                return ptr && ptr->pair_id == pair_id;
+            });
 
         if (it == link_pool.end()) return;
 
-        client_sock = it->client_socket;
-        data_sock = it->data_socket;
+        client_sock = (*it)->client_socket;
+        data_sock = (*it)->data_socket;
 
         link_pool.erase(it);
     }
@@ -465,30 +475,26 @@ void GrayServer::remove_pair(uint64_t pair_id) {
         data_sock->shutdown(asio::ip::tcp::socket::shutdown_both, ec);
         data_sock->close(ec);
     }
-	//spdlog::info("Pair {} removed", pair_id);
+	
 }
 
 void GrayServer::remove_all_pairs() {
-    std::vector<link_par> pairs_to_remove;
+    while (true) {
+        std::string target_id;
+        
+        {
+            std::lock_guard<std::mutex> lock(link_pool_mutex);
+            if (link_pool.empty()) {
+                break; 
+            }
 
-    {
-        std::lock_guard<std::mutex> lock(link_pool_mutex);
-        pairs_to_remove.swap(link_pool);
-    }
-
-    for (auto& pair : pairs_to_remove) {
-        if (pair.client_socket && pair.client_socket->is_open()) {
-            asio::error_code ec;
-            pair.client_socket->shutdown(asio::ip::tcp::socket::shutdown_both, ec);
-            pair.client_socket->close(ec);
+            target_id = link_pool.back()->pair_id;
         }
 
-        if (pair.data_socket && pair.data_socket->is_open()) {
-            asio::error_code ec;
-            pair.data_socket->shutdown(asio::ip::tcp::socket::shutdown_both, ec);
-            pair.data_socket->close(ec);
-        }
+        remove_pair(target_id);
     }
+
+    spdlog::info("Server {}: all pairs have been removed", id);
 }
 
 void GrayServer::send_control_packet(uint32_t type, uint32_t value, std::function<void(const asio::error_code&)> handler) {
@@ -509,5 +515,48 @@ void GrayServer::send_control_packet(uint32_t type, uint32_t value, std::functio
                 self->shutdown();
             }
             if (handler) handler(ec);
+        });
+}
+
+void GrayServer::start_speed_monitor() {
+    auto self = shared_from_this();
+
+    speed_monitor_timer.expires_after(std::chrono::seconds(1));
+    speed_monitor_timer.async_wait([self](const asio::error_code& ec) {
+        if (ec || !self->alive) return;
+
+        uint64_t total_speed_in = 0;
+        uint64_t total_speed_out = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(self->link_pool_mutex);
+
+            for (auto& pair : self->link_pool) {
+                if (!pair) continue;
+
+                uint64_t current_in = pair->trafic_in.load();
+                uint64_t current_out = pair->trafic_out.load();
+
+                uint64_t delta_in = current_in - pair->last_in_snapshot;
+                uint64_t delta_out = current_out - pair->last_out_snapshot;
+
+                total_speed_in += delta_in;
+                total_speed_out += delta_out;
+
+                pair->last_in_snapshot = current_in;
+                pair->last_out_snapshot = current_out;
+            }
+        }
+
+        
+        if (total_speed_in > 0 || total_speed_out > 0) {
+            spdlog::info("Server Speed: In: {:.2f} MB/s, Out: {:.2f} MB/s | Active pairs: {}",
+                total_speed_in / (1024.0 * 1024.0),
+                total_speed_out / (1024.0 * 1024.0),
+                self->link_pool.size());
+        }
+
+        
+        self->start_speed_monitor();
         });
 }

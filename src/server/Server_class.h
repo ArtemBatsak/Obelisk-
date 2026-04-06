@@ -43,8 +43,13 @@ struct Packet {
 struct link_par {
     std::shared_ptr<asio::ip::tcp::socket> data_socket;
     std::shared_ptr<asio::ip::tcp::socket> client_socket;
-    uint64_t pair_id;
+    std::string pair_id;
     int done_count = 2;
+    std::atomic<uint64_t> trafic_in{ 0 };
+    std::atomic<uint64_t> trafic_out{ 0 };
+    uint64_t last_in_snapshot{ 0 };
+    uint64_t last_out_snapshot{ 0 };
+
 };
 
 // The GrayServer class represents a single proxy server instance. It manages incoming client and data connections, 
@@ -74,6 +79,7 @@ private:
     asio::steady_timer ping_timer;
 	asio::steady_timer pong_timer;
 	asio::steady_timer data_pool_timer;
+	asio::steady_timer speed_monitor_timer;
 
     using Clock = std::chrono::steady_clock;
 
@@ -84,7 +90,7 @@ private:
     int ping_interval_sec;
     int ping_timeout_sec;
     std::shared_ptr<ssl_socket> control_socket;
-    std::vector<link_par> link_pool;
+    std::vector<std::shared_ptr<link_par>> link_pool;
     std::mutex link_pool_mutex;
     std::mutex data_pool_mutex;
     std::mutex client_pool_mutex;
@@ -109,13 +115,14 @@ private:
     void schedule_ping();
 
     uint32_t generate_otp();
-    uint64_t generate_id(std::shared_ptr<asio::ip::tcp::socket> sock);
+    std::string generate_id(std::shared_ptr<asio::ip::tcp::socket> sock);
 
     void try_create_pair();
     void splice_loop(std::shared_ptr<asio::ip::tcp::socket> in_sock,
         std::shared_ptr<asio::ip::tcp::socket> out_sock,
-        uint64_t pair_id);
-    void remove_pair(uint64_t pair_id);
+        std::shared_ptr<link_par> pair,
+        std::string way);
+    void remove_pair(std::string pair_id);
     void remove_all_pairs();
     
     void send_control_packet(uint32_t type, uint32_t value, std::function<void(const asio::error_code&)> handler = nullptr);
@@ -141,7 +148,9 @@ public:
         ping_timer(io),
         pong_timer(io),
         data_pool_timer(io),
-        alive(true)
+		speed_monitor_timer(io),
+        alive(true),
+		current_otp(0)
     {
     }
 
@@ -149,7 +158,8 @@ public:
         init_acceptor(client_port);
         async_accept_client();
         check_data_pool();
-		schedule_ping();    
+		schedule_ping();
+        start_speed_monitor();
 	}
     void handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock, uint32_t otp);
     uint32_t get_id() const { return id; }
@@ -158,6 +168,7 @@ public:
 		std::lock_guard<std::mutex> lock(link_pool_mutex);
 		return static_cast<uint32_t>(link_pool.size());
 	}
+    void start_speed_monitor();
     void shutdown();
 };
 

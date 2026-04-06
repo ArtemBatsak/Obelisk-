@@ -13,15 +13,14 @@ file(GLOB_RECURSE SOURCES ${SRC_DIR}/*.cpp ${SRC_DIR}/*.h)
 add_executable(${PROJECT_NAME} ${SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE ${SRC_DIR})
 
-# ------------------ Dependencies ------------------
-find_package(Threads REQUIRED) # Нужен для работы httplib на Linux
+
+find_package(Threads REQUIRED) 
 find_package(spdlog CONFIG REQUIRED)
 find_package(asio CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
-# Активируем SSL поддержку (Критично для работы SSLServer)
 target_compile_definitions(${PROJECT_NAME} PRIVATE 
     CPPHTTPLIB_OPENSSL_SUPPORT
 )
@@ -34,7 +33,7 @@ target_link_libraries(${PROJECT_NAME}
         OpenSSL::Crypto
         httplib::httplib
         nlohmann_json::nlohmann_json
-        Threads::Threads # <--- ДОБАВЬ ЭТУ СТРОКУ (Обязательно для Linux)
+        Threads::Threads 
 )
 
 # ------------------ Windows specific ------------------
