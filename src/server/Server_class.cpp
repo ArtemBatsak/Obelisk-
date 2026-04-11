@@ -164,11 +164,9 @@ void GrayServer::shutdown()
         self->ping_timer.cancel();
         self->pong_timer.cancel();
         self->data_pool_timer.cancel();
+		self->speed_monitor_timer.cancel();
 
         asio::error_code ec;
-
-        if (self->data_acceptor_ && self->data_acceptor_->is_open())
-            self->data_acceptor_->close(ec);
 
         if (self->client_acceptor_ && self->client_acceptor_->is_open())
             self->client_acceptor_->close(ec);
@@ -521,12 +519,39 @@ void GrayServer::send_control_packet(uint32_t type, uint32_t value, std::functio
 void GrayServer::start_speed_monitor() {
     auto self = shared_from_this();
 
-    speed_monitor_timer.expires_after(std::chrono::seconds(1));
-    speed_monitor_timer.async_wait([self](const asio::error_code& ec) {
-        if (ec || !self->alive) return;
+    if (!self->alive) return;
 
-        uint64_t total_speed_in = 0;
-        uint64_t total_speed_out = 0;
+    if (self->speed_monitor_running.exchange(true)) {
+        return;
+    }
+
+    self->last_measure_time = std::chrono::steady_clock::now();
+    self->schedule_speed_monitor();
+}
+
+void GrayServer::schedule_speed_monitor() {
+    auto self = shared_from_this();
+
+    self->speed_monitor_timer.expires_at(
+        std::chrono::steady_clock::now() + std::chrono::seconds(1));
+
+    self->speed_monitor_timer.async_wait([self](const asio::error_code& ec) {
+        if (ec || !self->alive) {
+            self->speed_monitor_running = false;
+            return;
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        double seconds = std::chrono::duration<double>(now - self->last_measure_time).count();
+        self->last_measure_time = now;
+
+        if (seconds < 1e-6) {
+            self->schedule_speed_monitor();
+            return;
+        }
+
+        uint64_t total_bytes_in = 0;
+        uint64_t total_bytes_out = 0;
 
         {
             std::lock_guard<std::mutex> lock(self->link_pool_mutex);
@@ -534,29 +559,42 @@ void GrayServer::start_speed_monitor() {
             for (auto& pair : self->link_pool) {
                 if (!pair) continue;
 
-                uint64_t current_in = pair->trafic_in.load();
-                uint64_t current_out = pair->trafic_out.load();
+                uint64_t current_in = pair->trafic_in.load(std::memory_order_relaxed);
+                uint64_t current_out = pair->trafic_out.load(std::memory_order_relaxed);
 
-                uint64_t delta_in = current_in - pair->last_in_snapshot;
-                uint64_t delta_out = current_out - pair->last_out_snapshot;
+                uint64_t delta_in = 0;
+                uint64_t delta_out = 0;
 
-                total_speed_in += delta_in;
-                total_speed_out += delta_out;
+                if (current_in >= pair->last_in_snapshot)
+                    delta_in = current_in - pair->last_in_snapshot;
+
+                if (current_out >= pair->last_out_snapshot)
+                    delta_out = current_out - pair->last_out_snapshot;
+
+                total_bytes_in += delta_in;
+                total_bytes_out += delta_out;
 
                 pair->last_in_snapshot = current_in;
                 pair->last_out_snapshot = current_out;
             }
         }
 
-        
-        if (total_speed_in > 0 || total_speed_out > 0) {
-            spdlog::info("Server Speed: In: {:.2f} MB/s, Out: {:.2f} MB/s | Active pairs: {}",
-                total_speed_in / (1024.0 * 1024.0),
-                total_speed_out / (1024.0 * 1024.0),
+        double speed_in = total_bytes_in / seconds;
+        double speed_out = total_bytes_out / seconds;
+
+        constexpr double BYTES_TO_MB = 1.0 / (1000.0 * 1000.0);
+
+        if (speed_in > 0 || speed_out > 0) {
+            spdlog::info(
+                "Server Speed: In: {:.2f} MB/s, Out: {:.2f} MB/s | Active pairs: {}",
+                speed_in * BYTES_TO_MB,
+                speed_out * BYTES_TO_MB,
                 self->link_pool.size());
         }
 
-        
-        self->start_speed_monitor();
+        self->total_speed_in.store((uint64_t)speed_in, std::memory_order_relaxed);
+        self->total_speed_out.store((uint64_t)speed_out, std::memory_order_relaxed);
+		self->total_traffic_session += total_bytes_in + total_bytes_out;
+        self->schedule_speed_monitor();
         });
 }
