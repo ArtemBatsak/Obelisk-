@@ -186,8 +186,6 @@ static const std::string INDEX_HTML = R"raw(
             padding: 10px;
         }
 
-        .log-msg { color: #ffffff !important; }
-
         .modal {
             position: fixed; top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.85); display: none;
@@ -215,8 +213,8 @@ static const std::string INDEX_HTML = R"raw(
 <div class="modal" id="manageModal">
     <div class="modal-content">
         <h3 style="margin-top:0">Management</h3>
-        <button class="primary-btn" onclick="triggerAddClient()">👤 Add Client (Server)</button>
-        <button class="primary-btn" onclick="triggerManagePorts()">🔌 Add Ports to Pool</button>
+        <button class="primary-btn" onclick="triggerAddClient()">👤 Add Client</button>
+        <button class="primary-btn" onclick="triggerManagePorts()">🔌 Add Ports</button>
         <button class="primary-btn" style="background: #444;" onclick="triggerViewPorts()">📋 View Free Ports</button>
         <button class="primary-btn" style="background: #500;" onclick="triggerDeletePorts()">❌ Delete Ports</button>
         <button class="delete" style="width:100%; margin-top: 10px;" onclick="closeManageModal()">Close</button>
@@ -233,7 +231,7 @@ static const std::string INDEX_HTML = R"raw(
 
 <div id="consoleOverlay">
     <div class="console-header">
-        <span style="font-weight:bold; color:var(--accent)">System Log (obelisk.log)</span>
+        <span style="font-weight:bold; color:var(--accent)">System Log</span>
         <button onclick="toggleConsole()" style="background:var(--danger); color:white; padding: 8px 20px; border-radius: 5px; cursor: pointer;">Close</button>
     </div>
     <div id="consoleContent"></div>
@@ -243,15 +241,13 @@ static const std::string INDEX_HTML = R"raw(
     <div class="modal-content">
         <h3 id="portsModalTitle" style="margin-top:0">Add Free Ports</h3>
         <p class="small" style="color: var(--text-dim); margin-bottom: 5px;">Enter a single port or a range.</p>
-        
         <div class="port-range-inputs">
             <input id="portFirst" type="number" placeholder="From" min="1025" max="65535">
             <span>-</span>
             <input id="portSecond" type="number" placeholder="To" min="1025" max="65535">
         </div>
-        
         <div style="display: flex; gap: 10px; margin-top: 10px;">
-            <button id="portSubmitBtn" class="edit" style="flex: 1; background:var(--accent); color:white" onclick="submitPorts()">Add Range</button>
+            <button id="portSubmitBtn" class="edit" style="flex: 1; background:var(--accent); color:white">Submit</button>
             <button class="delete" style="flex: 1" onclick="closePortsModal()">Cancel</button>
         </div>
     </div>
@@ -273,39 +269,7 @@ let currentEditId = null;
 let consoleActive = false;
 let consoleInterval = null;
 
-function openManageModal() { document.getElementById("manageModal").style.display = "flex"; }
-function closeManageModal() { document.getElementById("manageModal").style.display = "none"; }
-
-function triggerAddClient() {
-    closeManageModal();
-    openAddModal();
-}
-
-function triggerManagePorts() {
-    closeManageModal();
-    document.getElementById("portsModalTitle").innerText = "Add Free Ports";
-    const btn = document.getElementById("portSubmitBtn");
-    btn.innerText = "Add Range";
-    btn.style.background = "var(--accent)";
-    btn.onclick = submitPorts;
-    document.getElementById("portsModal").style.display = "flex";
-}
-
-function triggerDeletePorts() {
-    closeManageModal();
-    document.getElementById("portsModalTitle").innerText = "Delete Ports";
-    const btn = document.getElementById("portSubmitBtn");
-    btn.innerText = "Delete Range";
-    btn.style.background = "var(--danger)";
-    btn.onclick = submitDeletePorts;
-    document.getElementById("portsModal").style.display = "flex";
-}
-
-function triggerViewPorts() {
-    closeManageModal();
-    openViewPortsModal();
-}
-
+// --- API Core ---
 async function api(path, body = null) {
     try {
         const options = {
@@ -316,121 +280,89 @@ async function api(path, body = null) {
         const res = await fetch(path, options);
         if (!res.ok) return { status: "error" };
         return await res.json();
-    } catch (e) {
-        return { status: "error" };
+    } catch (e) { return { status: "error" }; }
+}
+
+// --- Smart Update Helper ---
+function updateText(id, value) {
+    const el = document.getElementById(id);
+    if (el && el.textContent !== String(value)) {
+        el.textContent = value;
     }
 }
 
+// --- Main Data Loader ---
 async function loadServers() {
     const data = await api("/api/servers");
     if (!Array.isArray(data)) return;
+
     const container = document.getElementById("servers");
-    container.innerHTML = "";
+    const activeIds = new Set();
+
     data.forEach(server => {
-        const div = document.createElement("div");
-        div.className = "server";
-        div.innerHTML = `
-            <div style="display:flex; align-items:center">
-                <div class="indicator ${server.online ? "online" : "offline"}"></div>
-                <div class="server-info">
-                    <span class="server-name" id="comm-${server.id}"></span>
-                    <div class="small">ID: ${server.id} | Pairs: ${server.active_pairs} | Latency: ${server.last_seen} ms</div>
-                    <div class="small">Ports: ${server.client_port} (Client) </div>
+        const cardId = `server-card-${server.id}`;
+        activeIds.add(cardId);
+        let card = document.getElementById(cardId);
+
+        // Create card if missing
+        if (!card) {
+            card = document.createElement("div");
+            card.id = cardId;
+            card.className = "server";
+            card.innerHTML = `
+                <div style="display:flex; align-items:center">
+                    <div id="ind-${server.id}" class="indicator"></div>
+                    <div class="server-info">
+                        <span class="server-name" id="comm-${server.id}"></span>
+                        <div class="small">
+                            ID: ${server.id} | 
+                            Pairs: <span id="pairs-${server.id}" style="color:var(--accent)">0</span> | 
+                            Latency: <span id="lat-${server.id}">0</span> ms
+                        </div>
+                        <div class="small">Port: ${server.client_port} (Client)</div>
+                    </div>
                 </div>
-            </div>
-            <div class="actions">
+                <div class="actions" id="actions-${server.id}"></div>
+            `;
+            container.appendChild(card);
+        }
+
+        // Update Text Content
+        updateText(`comm-${server.id}`, server.comment || "No description");
+        updateText(`pairs-${server.id}`, server.active_pairs);
+        updateText(`lat-${server.id}`, server.last_seen);
+
+        // Update Indicator
+        const ind = document.getElementById(`ind-${server.id}`);
+        const statusClass = server.online ? "online" : "offline";
+        if (!ind.classList.contains(statusClass)) {
+            ind.className = `indicator ${statusClass}`;
+        }
+
+        // Update Buttons (only if state changed)
+        const act = document.getElementById(`actions-${server.id}`);
+        const stateKey = server.online ? "on" : "off";
+        if (act.dataset.state !== stateKey) {
+            act.dataset.state = stateKey;
+            act.innerHTML = `
                 ${server.online ? `<button class="stop" onclick="stopServer(${server.id})">Stop</button>` : ''}
                 <button class="edit" onclick="openEditModal(${server.id}, '${server.comment}')">Edit</button>
                 <button class="delete" onclick="deleteServer(${server.id})">Delete</button>
-            </div>
-        `;
-        container.appendChild(div);
-        document.getElementById(`comm-${server.id}`).textContent = server.comment || "No description";
+            `;
+        }
+    });
+
+    // Clean up deleted servers
+    Array.from(container.children).forEach(child => {
+        if (!activeIds.has(child.id)) child.remove();
     });
 }
 
+// --- UI Management ---
+function openManageModal() { document.getElementById("manageModal").style.display = "flex"; }
+function closeManageModal() { document.getElementById("manageModal").style.display = "none"; }
 
-async function openViewPortsModal() {
-    const modal = document.getElementById("viewPortsModal");
-    const content = document.getElementById("portsListContent");
-    modal.style.display = "flex";
-    content.innerHTML = "Fetching...";
-
-    const data = await api("/api/ports/list");
-    if (data.status === "success" || data.status === "empty") {
-        content.innerHTML = `
-            <div style="color:var(--accent); margin-bottom:5px;">Total unique ports: ${data.count || 0}</div>
-            <div style="color:var(--text)">Ranges: ${data.ranges || 'Pool is empty'}</div>
-        `;
-    } else {
-        content.innerHTML = "Error loading pool.";
-    }
-}
-
-function closeViewPortsModal() { document.getElementById("viewPortsModal").style.display = "none"; }
-
-function closePortsModal() { 
-    document.getElementById("portsModal").style.display = "none"; 
-    document.getElementById("portFirst").value = "";
-    document.getElementById("portSecond").value = "";
-}
-
-async function submitPorts() {
-    const f = document.getElementById("portFirst").value;
-    const s = document.getElementById("portSecond").value;
-    if (!f) return alert("Enter port!");
-    const res = await api("/api/ports/add", { first: parseInt(f), second: s ? parseInt(s) : 0 });
-    if (res.status === "ok") { closePortsModal(); alert("Ports added!"); }
-    else alert("Error adding ports");
-}
-
-async function submitDeletePorts() {
-    const f = document.getElementById("portFirst").value;
-    const s = document.getElementById("portSecond").value;
-    if (!f) return alert("Enter port!");
-    
-    if(!confirm("Are you sure you want to delete these ports?")) return;
-
-    const res = await api("/api/ports/delete", { first: parseInt(f), second: s ? parseInt(s) : 0 });
-    if (res.status === "ok") { closePortsModal(); alert("Ports deleted!"); }
-    else alert("Ports not found in pool.");
-}
-
-// --- Остальные функции ---
-
-async function stopServer(id) {
-    if (confirm(`Stop server ID: ${id}?`)) {
-        const res = await api("/api/server/stop", { id });
-        if (res.status === "ok") loadServers();
-    }
-}
-
-async function updateConsole() {
-    const data = await api("/api/logs");
-    if (data && data.logs) {
-        const el = document.getElementById("consoleContent");
-        const shouldScroll = el.scrollTop + el.clientHeight >= el.scrollHeight - 50;
-        const lines = data.logs.split('\n');
-        el.innerHTML = lines.map(line => {
-            if (!line.trim()) return "";
-            let safeLine = line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-            return `<div class="log-msg">${safeLine}</div>`;
-        }).join('');
-        if (shouldScroll) el.scrollTop = el.scrollHeight;
-    }
-}
-
-function toggleConsole() {
-    const overlay = document.getElementById("consoleOverlay");
-    consoleActive = !consoleActive;
-    overlay.style.display = consoleActive ? "flex" : "none";
-    if (consoleActive) {
-        updateConsole();
-        consoleInterval = setInterval(updateConsole, 2000);
-    } else {
-        clearInterval(consoleInterval);
-    }
-}
+function triggerAddClient() { closeManageModal(); openAddModal(); }
 
 function openAddModal() {
     currentEditId = null;
@@ -450,10 +382,79 @@ function closeModal() { document.getElementById("addModal").style.display = "non
 
 async function submitModal() {
     const comment = document.getElementById("serverComment").value;
-    if (currentEditId) await api("/api/server/change_comment", { id: currentEditId, comment });
-    else await api("/api/server/add", { comment });
-    closeModal();
-    loadServers();
+    const res = currentEditId 
+        ? await api("/api/server/change_comment", { id: currentEditId, comment })
+        : await api("/api/server/add", { comment });
+    
+    if (res.status === "ok" || res.status === "success") {
+        closeModal();
+        loadServers();
+    } else {
+        alert("Action failed");
+    }
+}
+
+// --- Ports Management ---
+function triggerManagePorts() {
+    closeManageModal();
+    const modal = document.getElementById("portsModal");
+    document.getElementById("portsModalTitle").innerText = "Add Free Ports";
+    const btn = document.getElementById("portSubmitBtn");
+    btn.innerText = "Add Range";
+    btn.style.background = "var(--accent)";
+    btn.onclick = submitPorts;
+    modal.style.display = "flex";
+}
+
+function triggerDeletePorts() {
+    closeManageModal();
+    const modal = document.getElementById("portsModal");
+    document.getElementById("portsModalTitle").innerText = "Delete Ports";
+    const btn = document.getElementById("portSubmitBtn");
+    btn.innerText = "Delete Range";
+    btn.style.background = "var(--danger)";
+    btn.onclick = submitDeletePorts;
+    modal.style.display = "flex";
+}
+
+function closePortsModal() { 
+    document.getElementById("portsModal").style.display = "none";
+    document.getElementById("portFirst").value = "";
+    document.getElementById("portSecond").value = "";
+}
+
+async function submitPorts() {
+    const f = document.getElementById("portFirst").value;
+    const s = document.getElementById("portSecond").value;
+    if (!f) return alert("Enter port!");
+    const res = await api("/api/ports/add", { first: parseInt(f), second: s ? parseInt(s) : 0 });
+    if (res.status === "ok") { closePortsModal(); alert("Ports added!"); }
+}
+
+async function submitDeletePorts() {
+    const f = document.getElementById("portFirst").value;
+    const s = document.getElementById("portSecond").value;
+    if (!f) return alert("Enter port!");
+    if(!confirm("Are you sure?")) return;
+    const res = await api("/api/ports/delete", { first: parseInt(f), second: s ? parseInt(s) : 0 });
+    if (res.status === "ok") { closePortsModal(); alert("Ports deleted!"); }
+}
+
+async function triggerViewPorts() {
+    closeManageModal();
+    document.getElementById("viewPortsModal").style.display = "flex";
+    const data = await api("/api/ports/list");
+    const content = document.getElementById("portsListContent");
+    content.innerHTML = `<div>Total: ${data.count || 0}</div><div>${data.ranges || 'Empty'}</div>`;
+}
+function closeViewPortsModal() { document.getElementById("viewPortsModal").style.display = "none"; }
+
+// --- Server Control ---
+async function stopServer(id) {
+    if (confirm(`Stop server ${id}?`)) {
+        await api("/api/server/stop", { id });
+        loadServers();
+    }
 }
 
 async function deleteServer(id) {
@@ -463,7 +464,32 @@ async function deleteServer(id) {
     }
 }
 
-setInterval(loadServers, 5000);
+// --- Console ---
+async function updateConsole() {
+    const data = await api("/api/logs");
+    if (data && data.logs) {
+        const el = document.getElementById("consoleContent");
+        if (el.dataset.lastLog !== data.logs) {
+            const shouldScroll = el.scrollTop + el.clientHeight >= el.scrollHeight - 50;
+            el.textContent = data.logs;
+            el.dataset.lastLog = data.logs;
+            if (shouldScroll) el.scrollTop = el.scrollHeight;
+        }
+    }
+}
+
+function toggleConsole() {
+    const overlay = document.getElementById("consoleOverlay");
+    consoleActive = !consoleActive;
+    overlay.style.display = consoleActive ? "flex" : "none";
+    if (consoleActive) {
+        updateConsole();
+        consoleInterval = setInterval(updateConsole, 2000);
+    } else { clearInterval(consoleInterval); }
+}
+
+// Init
+setInterval(loadServers, 2000);
 loadServers();
 </script>
 </body>

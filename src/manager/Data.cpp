@@ -79,7 +79,9 @@ int DataServers::gen_id() {
     int new_id;
     bool exists;
     do {
-        new_id = std::rand() % 9000000 + 1000000;
+		// Generate a random 7-digit ID
+		// Must be careful, because get_random give uint32_t and if we cast it to int, it can be negative, so we need to take care of that
+        new_id = static_cast<int>(get_random(1000000, 9999999));
         exists = false;
         for (const auto& s : servers_id) {
             if (s.id == new_id) {
@@ -331,4 +333,20 @@ std::string DataServers::get_port_pool() const {
     j["ranges"] = ranges_str;
 
     return j.dump();
+}
+
+uint32_t get_random(unsigned int min, unsigned int max) {
+    if (min > max) return min;
+
+    unsigned int random_val;
+
+    if (RAND_bytes(reinterpret_cast<unsigned char*>(&random_val), sizeof(random_val)) != 1) {
+        throw std::runtime_error("OpenSSL: Error generating random bytes, we will fallback to std::rand()");
+
+        random_val = static_cast<unsigned int>(std::rand());
+    }
+
+    unsigned int range = max - min + 1;
+
+    return min + (static_cast<uint32_t>(random_val % range));
 }

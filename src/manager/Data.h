@@ -12,6 +12,8 @@
 #include <set>
 #include "asio.hpp"
 #include <nlohmann/json.hpp>
+#include <openssl/rand.h>
+#include <stdexcept>
 // Data structure for server information + functions to convert to/from string for file storage
 struct Server_struct {
     int id=0;
@@ -52,3 +54,5 @@ public:
 	std::string get_port_pool() const;
 
 };
+
+uint32_t get_random(unsigned int min, unsigned int max);
