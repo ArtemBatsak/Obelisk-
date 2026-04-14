@@ -17,7 +17,7 @@ struct Server_struct {
     int id=0;
     int client_port=0;
     std::string comment="0";
-
+	uint64_t total_traffic = 0;
     std::string to_string() const;
     static Server_struct from_string(const std::string& line);
 };

@@ -194,6 +194,9 @@ public:
 		std::lock_guard<std::mutex> lock(link_pool_mutex);
 		return static_cast<uint32_t>(link_pool.size());
 	}
+	uint64_t get_total_traffic() const { return total_traffic_session.load(); }
+    uint64_t get_total_speed_in() const { return total_speed_in.load(); }
+    uint64_t get_total_speed_out() const { return total_speed_out.load(); }
 
     void shutdown();
 };
