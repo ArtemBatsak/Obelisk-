@@ -1,5 +1,6 @@
 ﻿#include "Server_class.h"
 #include "logger/Logger.h"
+#include <deque>
 
 void GrayServer::init_acceptor(int client_port) {
     client_acceptor_ = std::make_shared<asio::ip::tcp::acceptor>(
@@ -10,58 +11,53 @@ void GrayServer::init_acceptor(int client_port) {
 void GrayServer::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock, uint32_t otp) {
     auto self = shared_from_this();
     if (!self->alive) return;
-    
 
-            uint32_t received_otp = otp;
-            bool otp_valid = false;
-			
-            {
-                std::lock_guard<std::mutex> lock(otp_pool_mutex);
-                auto it = std::find(otp_pool.begin(), otp_pool.end(), received_otp);
-                if (it != otp_pool.end()) {
-                    otp_valid = true;
-                    otp_pool.erase(it); 
-                }
-            }
 
-            if (!otp_valid) {
-                spdlog::warn(
-                    "Server {}: received OTP {} that is not in the pool; rejecting connection",
-                    id, received_otp
-				);
-                try {
-                    auto ep = sock->remote_endpoint();
-                    spdlog::error(
-                        "Server {}: received wrong OTP {} (not in pool) from {}:{}",
-                        id, received_otp,
-                        ep.address().to_string(), ep.port()
-                    );
-                }
-                catch (...) {
-                    spdlog::error(
-                        "Server {}: received wrong OTP {} (not in pool); remote endpoint unavailable",
-                        id, received_otp
-                    );
-                }
+    uint32_t received_otp = otp;
+    bool otp_valid = false;
 
-                asio::error_code ignored;
-                sock->shutdown(asio::ip::tcp::socket::shutdown_both, ignored);
-                sock->close(ignored);
-                return;
-            }
-            asio::error_code ka_ec;
-            sock->set_option(asio::socket_base::keep_alive(true), ka_ec);
-            if (ka_ec) {
-                
-                spdlog::error("Server {}: failed to set keepalive on data socket (code {}): {}", id, ka_ec.value(), ka_ec.message());
-            }
+    {
+        std::lock_guard<std::mutex> lock(otp_pool_mutex);
+        auto it = std::find(otp_pool.begin(), otp_pool.end(), received_otp);
+        if (it != otp_pool.end()) {
+            otp_valid = true;
+            otp_pool.erase(it);
+        }
+    }
 
-            {
-                std::lock_guard<std::mutex> lock(data_pool_mutex);
-                data_pool.push_back(sock);
-            }
-            self->try_create_pair();
-        
+    if (!otp_valid) {
+        spdlog::warn(
+            "Server {}: received OTP {} that is not in the pool; rejecting connection",
+            id, received_otp
+        );
+        try {
+            auto ep = sock->remote_endpoint();
+            spdlog::error(
+                "Server {}: received wrong OTP {} (not in pool) from {}:{}",
+                id, received_otp,
+                ep.address().to_string(), ep.port()
+            );
+        }
+        catch (...) {
+            spdlog::error(
+                "Server {}: received wrong OTP {} (not in pool); remote endpoint unavailable",
+                id, received_otp
+            );
+        }
+
+        asio::error_code ignored;
+        sock->shutdown(asio::ip::tcp::socket::shutdown_both, ignored);
+        sock->close(ignored);
+        return;
+    }
+    self->enable_keepalive(sock);
+
+    {
+        std::lock_guard<std::mutex> lock(data_pool_mutex);
+        data_pool.push_back(sock);
+    }
+    self->try_create_pair();
+
 }
 
 uint32_t GrayServer::generate_otp() {
@@ -131,6 +127,11 @@ void GrayServer::enable_keepalive(std::shared_ptr<asio::ip::tcp::socket> sock)
     if (ec) {
         spdlog::error("Server {}: set_option keep_alive failed (code {}): {}", id, ec.value(), ec.message());
         return;
+    }
+
+    sock->set_option(asio::ip::tcp::no_delay(true), ec);
+    if (ec) {
+        spdlog::error("Server {}: set_option no_delay failed (code {}): {}", id, ec.value(), ec.message());
     }
 
 #ifdef _WIN32
@@ -383,63 +384,71 @@ void GrayServer::try_create_pair() {
         link_pool.push_back(pair);
     }
 
-    splice_loop(client_sock, data_sock, pair, "in");
-    splice_loop(data_sock, client_sock, pair, "out");
+    enable_keepalive(client_sock);
+    enable_keepalive(data_sock);
+
+    splice_loop(client_sock, data_sock, pair, true);
+    splice_loop(data_sock, client_sock, pair, false);
 }
 
 void GrayServer::splice_loop(
     std::shared_ptr<asio::ip::tcp::socket> in_sock,
     std::shared_ptr<asio::ip::tcp::socket> out_sock,
     std::shared_ptr<link_par> pair,
-    std::string way)
+    bool is_inbound)
 {
     auto self = shared_from_this();
-    auto buffer = std::make_shared<std::array<char, BuffSize>>();
 
-    in_sock->async_read_some(
-        asio::buffer(*buffer),
-        [self, in_sock, out_sock, buffer, pair,way]
-        (const asio::error_code& ec, std::size_t bytes)
+    auto buffer = std::make_shared<std::array<char, 64 * 1024>>();
+
+    auto do_read = std::make_shared<std::function<void()>>();
+
+    *do_read = [self, in_sock, out_sock, pair, buffer, is_inbound, do_read]() mutable
         {
-            if (ec) {
-                if (ec != asio::error::eof &&
-                    ec != asio::error::operation_aborted) {
-                    spdlog::error("Pair {}: read error (code {}): {}", pair->pair_id, ec.value(), ec.message());
-                }
-                self->remove_pair(pair->pair_id);
-                return;
-            }
-
-            if (bytes == 0) {
-                self->remove_pair(pair->pair_id);
-                return;
-            }
-            if (way == "in") {
-                pair->trafic_in += bytes; 
-                // spdlog::debug("Pair {}: total in: {}", pair->pair_id, pair->trafic_in.load());
-            }
-            else {
-                pair->trafic_out += bytes;
-                // spdlog::debug("Pair {}: total out: {}", pair->pair_id, pair->trafic_out.load());
-            }
-
-            asio::async_write(
-                *out_sock,
-                asio::buffer(buffer->data(), bytes),
-                [self, in_sock, out_sock, buffer, pair,way]
-                (const asio::error_code& ec_write, std::size_t written)
+            in_sock->async_read_some(
+                asio::buffer(*buffer),
+                [self, in_sock, out_sock, pair, buffer, is_inbound, do_read]
+                (const asio::error_code& ec, std::size_t bytes)
                 {
-                    if (ec_write) {
-                        if (ec_write != asio::error::eof && ec_write != asio::error::operation_aborted) {
-                            spdlog::error("Pair {}: write error (code {}): {}", pair->pair_id, ec_write.value(), ec_write.message());
+                    if (ec || bytes == 0) {
+                        if (ec != asio::error::eof &&
+                            ec != asio::error::operation_aborted) {
+                            spdlog::error("Pair {}: read error ({}): {}",
+                                pair->pair_id, ec.value(), ec.message());
                         }
                         self->remove_pair(pair->pair_id);
                         return;
                     }
 
-                    self->splice_loop(in_sock, out_sock, pair,way);
-                });
-        });
+                    if (is_inbound)
+                        pair->trafic_in += bytes;
+                    else
+                        pair->trafic_out += bytes;
+
+                    asio::async_write(
+                        *out_sock,
+                        asio::buffer(buffer->data(), bytes),
+                        [self, pair, do_read]
+                        (const asio::error_code& ec_write, std::size_t)
+                        {
+                            if (ec_write) {
+                                if (ec_write != asio::error::eof &&
+                                    ec_write != asio::error::operation_aborted) {
+                                    spdlog::error("Pair {}: write error ({}): {}",
+                                        pair->pair_id, ec_write.value(), ec_write.message());
+                                }
+                                self->remove_pair(pair->pair_id);
+                                return;
+                            }
+
+                            (*do_read)(); 
+                        }
+                    );
+                }
+            );
+        };
+
+    (*do_read)();
 }
 
 void GrayServer::remove_pair(std::string pair_id) {

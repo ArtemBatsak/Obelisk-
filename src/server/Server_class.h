@@ -106,7 +106,7 @@ class GrayServer : public std::enable_shared_from_this<GrayServer> {
         std::shared_ptr<asio::ip::tcp::socket> in_sock,
         std::shared_ptr<asio::ip::tcp::socket> out_sock,
         std::shared_ptr<link_par> pair,
-        std::string way
+        bool way
     );
 
     std::string generate_id(std::shared_ptr<asio::ip::tcp::socket> sock);

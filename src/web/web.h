@@ -68,7 +68,8 @@ private:
 // This is a raw string literal containing the HTML, CSS, and JavaScript for the web admin interface.
 // You can put this in a separate .html file and read it at runtime, but for simplicity, it's included directly in the code.
 
-static const std::string INDEX_HTML_ = R"raw(
+// Часть 1: HTML разметка и CSS стили
+static const std::string INDEX_HTML_PART_1 = R"raw(
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -77,129 +78,41 @@ static const std::string INDEX_HTML_ = R"raw(
     <title>Gray Proxy Admin</title>
     <style>
         :root {
-            --bg-dark: #0f0f0f;
-            --bg-panel: #1e1e1e;
-            --accent: #2e7dff;
-            --danger: #ff4444;
-            --warning: #ffaa00;
-            --success: #00ff66;
-            --text: #e0e0e0;
-            --text-dim: #999;
-            --terminal-bg: #0a0a0a;
+            --bg-dark: #0f0f0f; --bg-panel: #1e1e1e; --accent: #2e7dff;
+            --danger: #ff4444; --warning: #ffaa00; --success: #00ff66;
+            --text: #e0e0e0; --text-dim: #999; --terminal-bg: #0a0a0a;
         }
-
-        body {
-            margin: 0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: var(--bg-dark);
-            color: var(--text);
-            overflow-x: hidden;
-        }
-
-        header {
-            padding: 15px 25px;
-            background: #1b1b1b;
-            font-size: 20px;
-            font-weight: bold;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid #333;
-        }
-
+        body { margin: 0; font-family: 'Segoe UI', sans-serif; background: var(--bg-dark); color: var(--text); overflow-x: hidden; }
+        header { padding: 15px 25px; background: #1b1b1b; font-size: 20px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333; }
         .header-actions { display: flex; gap: 15px; align-items: center; }
-
-        .btn-icon {
-            cursor: pointer;
-            width: 38px;
-            height: 38px;
-            background: #333;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: 0.2s;
-            color: white;
-            border: none;
-            font-size: 18px;
-        }
-
+        .btn-icon { cursor: pointer; width: 38px; height: 38px; background: #333; border-radius: 8px; display: flex; align-items: center; justify-content: center; transition: 0.2s; color: white; border: none; font-size: 18px; }
         .btn-icon:hover { background: #444; }
         .manage-btn { background: var(--accent); }
-
         .container { max-width: 900px; margin: 0 auto; padding: 20px; }
-
-        .server {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 15px;
-            margin-bottom: 12px;
-            border-radius: 8px;
-            background: var(--bg-panel);
-            border: 1px solid #2a2a2a;
-        }
-
+        .server { display: flex; justify-content: space-between; align-items: center; padding: 15px; margin-bottom: 12px; border-radius: 8px; background: var(--bg-panel); border: 1px solid #2a2a2a; }
         .indicator { width: 10px; height: 10px; border-radius: 50%; margin-right: 15px; box-shadow: 0 0 8px currentColor; }
         .online { color: var(--success); background: currentColor; }
         .offline { color: #555; background: currentColor; }
-
         .server-name { font-size: 18px; font-weight: bold; color: var(--accent); display: block; margin-bottom: 2px; }
         .small { font-size: 13px; color: var(--text-dim); margin-top: 4px; }
         .actions { display: flex; gap: 8px; }
-
         button { padding: 8px 14px; border: none; border-radius: 5px; cursor: pointer; font-weight: 500; transition: 0.2s; }
         .delete { background: #333; color: #ff7777; }
         .edit { background: #333; color: #ccc; }
         .stop { background: #333; color: var(--warning); }
         .primary-btn { background: var(--accent); color: white; width: 100%; margin-bottom: 10px; font-size: 15px; padding: 12px; }
         button:hover { filter: brightness(1.2); }
-
-        #consoleOverlay {
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: var(--terminal-bg);
-            z-index: 1000;
-            display: none;
-            flex-direction: column;
-            padding: 20px;
-        }
-
-        .console-header {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 15px;
-            border-bottom: 1px solid #333;
-            padding-bottom: 10px;
-        }
-
-        #consoleContent {
-            flex: 1;
-            overflow-y: auto;
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 14px;
-            line-height: 1.5;
-            white-space: pre-wrap;
-            word-break: break-all;
-            color: #fff;
-            background: #000;
-            padding: 10px;
-        }
-
-        .modal {
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.85); display: none;
-            justify-content: center; align-items: center; z-index: 100;
-        }
+        #consoleOverlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: var(--terminal-bg); z-index: 1000; display: none; flex-direction: column; padding: 20px; }
+        .console-header { display: flex; justify-content: space-between; margin-bottom: 15px; border-bottom: 1px solid #333; padding-bottom: 10px; }
+        #consoleContent { flex: 1; overflow-y: auto; font-family: monospace; font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; color: #fff; background: #000; padding: 10px; }
+        .modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); display: none; justify-content: center; align-items: center; z-index: 100; }
         .modal-content { background: #1b1b1b; padding: 25px; border-radius: 10px; width: 320px; border: 1px solid #333; }
         input { width: 100%; padding: 10px; margin: 15px 0; background: #252525; border: 1px solid #444; color: white; border-radius: 4px; box-sizing: border-box; }
-        
         .port-range-inputs { display: flex; align-items: center; gap: 10px; }
         .port-pool-view { background: #000; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 13px; max-height: 150px; overflow-y: auto; margin: 10px 0; border: 1px solid #333; color: var(--success); }
     </style>
 </head>
 <body>
-
 <header>
     <span>Gray Proxy <span style="color:var(--accent)">Admin</span></span>
     <div class="header-actions">
@@ -207,9 +120,7 @@ static const std::string INDEX_HTML_ = R"raw(
         <button class="btn-icon manage-btn" onclick="openManageModal()" title="Manage System">⚙️</button>
     </div>
 </header>
-
 <div class="container" id="servers"></div>
-
 <div class="modal" id="manageModal">
     <div class="modal-content">
         <h3 style="margin-top:0">Management</h3>
@@ -220,7 +131,6 @@ static const std::string INDEX_HTML_ = R"raw(
         <button class="delete" style="width:100%; margin-top: 10px;" onclick="closeManageModal()">Close</button>
     </div>
 </div>
-
 <div class="modal" id="viewPortsModal">
     <div class="modal-content" style="width: 400px;">
         <h3 style="margin-top:0">Free Ports Pool</h3>
@@ -228,7 +138,6 @@ static const std::string INDEX_HTML_ = R"raw(
         <button class="primary-btn" onclick="closeViewPortsModal()">Close</button>
     </div>
 </div>
-
 <div id="consoleOverlay">
     <div class="console-header">
         <span style="font-weight:bold; color:var(--accent)">System Log</span>
@@ -236,7 +145,6 @@ static const std::string INDEX_HTML_ = R"raw(
     </div>
     <div id="consoleContent"></div>
 </div>
-
 <div class="modal" id="portsModal">
     <div class="modal-content">
         <h3 id="portsModalTitle" style="margin-top:0">Add Free Ports</h3>
@@ -252,7 +160,6 @@ static const std::string INDEX_HTML_ = R"raw(
         </div>
     </div>
 </div>
-
 <div class="modal" id="addModal">
     <div class="modal-content">
         <h3 id="modalTitle" style="margin-top:0">Add Server</h3>
@@ -263,13 +170,15 @@ static const std::string INDEX_HTML_ = R"raw(
         </div>
     </div>
 </div>
+)raw";
 
+// Часть 2: JavaScript логика
+static const std::string INDEX_JS_PART_2 = R"raw(
 <script>
 let currentEditId = null;
 let consoleActive = false;
 let consoleInterval = null;
 
-// --- API Core ---
 async function api(path, body = null) {
     try {
         const options = {
@@ -283,19 +192,14 @@ async function api(path, body = null) {
     } catch (e) { return { status: "error" }; }
 }
 
-// --- Smart Update Helper ---
 function updateText(id, value) {
     const el = document.getElementById(id);
-    if (el && el.textContent !== String(value)) {
-        el.textContent = value;
-    }
+    if (el && el.textContent !== String(value)) el.textContent = value;
 }
 
-// --- Main Data Loader ---
 async function loadServers() {
     const data = await api("/api/servers");
-     if (!Array.isArray(data)) return;
-
+    if (!Array.isArray(data)) return;
     const container = document.getElementById("servers");
     const activeIds = new Set();
 
@@ -303,8 +207,6 @@ async function loadServers() {
         const cardId = `server-card-${server.id}`;
         activeIds.add(cardId);
         let card = document.getElementById(cardId);
-
-        // Create card if missing
         if (!card) {
             card = document.createElement("div");
             card.id = cardId;
@@ -314,27 +216,15 @@ async function loadServers() {
                     <div id="ind-${server.id}" class="indicator"></div>
                     <div class="server-info">
                         <span class="server-name" id="comm-${server.id}"></span>
-                        <div class="small">
-                            ID: ${server.id} | 
-                            Pairs: <span id="pairs-${server.id}" style="color:var(--accent)">0</span> | 
-                            Latency: <span id="lat-${server.id}">0</span> ms
-                        </div>
-                        <div class="small">
-                            Speed In: <span id="speed-in-${server.id}">0</span> |
-                            Speed Out: <span id="speed-out-${server.id}">0</span>
-                        </div>
-                        <div class="small">
-                            Total Traffic: <span id="traffic-${server.id}">0</span> 
-                        </div>
+                        <div class="small">ID: ${server.id} | Pairs: <span id="pairs-${server.id}" style="color:var(--accent)">0</span> | Latency: <span id="lat-${server.id}">0</span> ms</div>
+                        <div class="small">Speed In: <span id="speed-in-${server.id}">0</span> | Speed Out: <span id="speed-out-${server.id}">0</span></div>
+                        <div class="small">Total Traffic: <span id="traffic-${server.id}">0</span></div>
                         <div class="small">Port: ${server.client_port} (Client)</div>
                     </div>
                 </div>
-                <div class="actions" id="actions-${server.id}"></div>
-            `;
+                <div class="actions" id="actions-${server.id}"></div>`;
             container.appendChild(card);
         }
-
-        // Update Text Content
         updateText(`comm-${server.id}`, server.comment || "No description");
         updateText(`pairs-${server.id}`, server.active_pairs);
         updateText(`lat-${server.id}`, server.last_seen);
@@ -342,14 +232,10 @@ async function loadServers() {
         updateText(`speed-out-${server.id}`, formatBytes(server.speed_out || 0) + "/s");
         updateText(`traffic-${server.id}`, formatBytes(server.total_traffic || 0));
 
-        // Update Indicator
         const ind = document.getElementById(`ind-${server.id}`);
         const statusClass = server.online ? "online" : "offline";
-        if (!ind.classList.contains(statusClass)) {
-            ind.className = `indicator ${statusClass}`;
-        }
+        if (!ind.classList.contains(statusClass)) ind.className = `indicator ${statusClass}`;
 
-        // Update Buttons (only if state changed)
         const act = document.getElementById(`actions-${server.id}`);
         const stateKey = server.online ? "on" : "off";
         if (act.dataset.state !== stateKey) {
@@ -357,81 +243,28 @@ async function loadServers() {
             act.innerHTML = `
                 ${server.online ? `<button class="stop" onclick="stopServer(${server.id})">Stop</button>` : ''}
                 <button class="edit" onclick="openEditModal(${server.id}, '${server.comment}')">Edit</button>
-                <button class="delete" onclick="deleteServer(${server.id})">Delete</button>
-            `;
+                <button class="delete" onclick="deleteServer(${server.id})">Delete</button>`;
         }
     });
-
-    // Clean up deleted servers
-    Array.from(container.children).forEach(child => {
-        if (!activeIds.has(child.id)) child.remove();
-    });
+    Array.from(container.children).forEach(child => { if (!activeIds.has(child.id)) child.remove(); });
 }
 
-// --- UI Management ---
 function openManageModal() { document.getElementById("manageModal").style.display = "flex"; }
 function closeManageModal() { document.getElementById("manageModal").style.display = "none"; }
-
 function triggerAddClient() { closeManageModal(); openAddModal(); }
-
-function openAddModal() {
-    currentEditId = null;
-    document.getElementById("modalTitle").innerText = "Add Server";
-    document.getElementById("serverComment").value = "";
-    document.getElementById("addModal").style.display = "flex";
-}
-
-function openEditModal(id, currentComment) {
-    currentEditId = id;
-    document.getElementById("modalTitle").innerText = "Edit Server";
-    document.getElementById("serverComment").value = currentComment;
-    document.getElementById("addModal").style.display = "flex";
-}
-
+function openAddModal() { currentEditId = null; document.getElementById("modalTitle").innerText = "Add Server"; document.getElementById("serverComment").value = ""; document.getElementById("addModal").style.display = "flex"; }
+function openEditModal(id, currentComment) { currentEditId = id; document.getElementById("modalTitle").innerText = "Edit Server"; document.getElementById("serverComment").value = currentComment; document.getElementById("addModal").style.display = "flex"; }
 function closeModal() { document.getElementById("addModal").style.display = "none"; }
 
 async function submitModal() {
     const comment = document.getElementById("serverComment").value;
-    const res = currentEditId 
-        ? await api("/api/server/change_comment", { id: currentEditId, comment })
-        : await api("/api/server/add", { comment });
-    
-    if (res.status === "ok" || res.status === "success") {
-        closeModal();
-        loadServers();
-    } else {
-        alert("Action failed");
-    }
+    const res = currentEditId ? await api("/api/server/change_comment", { id: currentEditId, comment }) : await api("/api/server/add", { comment });
+    if (res.status === "ok" || res.status === "success") { closeModal(); loadServers(); } else { alert("Action failed"); }
 }
 
-// --- Ports Management ---
-function triggerManagePorts() {
-    closeManageModal();
-    const modal = document.getElementById("portsModal");
-    document.getElementById("portsModalTitle").innerText = "Add Free Ports";
-    const btn = document.getElementById("portSubmitBtn");
-    btn.innerText = "Add Range";
-    btn.style.background = "var(--accent)";
-    btn.onclick = submitPorts;
-    modal.style.display = "flex";
-}
-
-function triggerDeletePorts() {
-    closeManageModal();
-    const modal = document.getElementById("portsModal");
-    document.getElementById("portsModalTitle").innerText = "Delete Ports";
-    const btn = document.getElementById("portSubmitBtn");
-    btn.innerText = "Delete Range";
-    btn.style.background = "var(--danger)";
-    btn.onclick = submitDeletePorts;
-    modal.style.display = "flex";
-}
-
-function closePortsModal() { 
-    document.getElementById("portsModal").style.display = "none";
-    document.getElementById("portFirst").value = "";
-    document.getElementById("portSecond").value = "";
-}
+function triggerManagePorts() { closeManageModal(); const modal = document.getElementById("portsModal"); document.getElementById("portsModalTitle").innerText = "Add Free Ports"; const btn = document.getElementById("portSubmitBtn"); btn.innerText = "Add Range"; btn.style.background = "var(--accent)"; btn.onclick = submitPorts; modal.style.display = "flex"; }
+function triggerDeletePorts() { closeManageModal(); const modal = document.getElementById("portsModal"); document.getElementById("portsModalTitle").innerText = "Delete Ports"; const btn = document.getElementById("portSubmitBtn"); btn.innerText = "Delete Range"; btn.style.background = "var(--danger)"; btn.onclick = submitDeletePorts; modal.style.display = "flex"; }
+function closePortsModal() { document.getElementById("portsModal").style.display = "none"; document.getElementById("portFirst").value = ""; document.getElementById("portSecond").value = ""; }
 
 async function submitPorts() {
     const f = document.getElementById("portFirst").value;
@@ -451,30 +284,16 @@ async function submitDeletePorts() {
 }
 
 async function triggerViewPorts() {
-    closeManageModal();
-    document.getElementById("viewPortsModal").style.display = "flex";
+    closeManageModal(); document.getElementById("viewPortsModal").style.display = "flex";
     const data = await api("/api/ports/list");
     const content = document.getElementById("portsListContent");
     content.innerHTML = `<div>Total: ${data.count || 0}</div><div>${data.ranges || 'Empty'}</div>`;
 }
 function closeViewPortsModal() { document.getElementById("viewPortsModal").style.display = "none"; }
 
-// --- Server Control ---
-async function stopServer(id) {
-    if (confirm(`Stop server ${id}?`)) {
-        await api("/api/server/stop", { id });
-        loadServers();
-    }
-}
+async function stopServer(id) { if (confirm(`Stop server ${id}?`)) { await api("/api/server/stop", { id }); loadServers(); } }
+async function deleteServer(id) { if (confirm("Are you sure?")) { await api("/api/server/delete", { id }); loadServers(); } }
 
-async function deleteServer(id) {
-    if (confirm("Are you sure?")) {
-        await api("/api/server/delete", { id });
-        loadServers();
-    }
-}
-
-// --- Console ---
 async function updateConsole() {
     const data = await api("/api/logs");
     if (data && data.logs) {
@@ -492,22 +311,17 @@ function toggleConsole() {
     const overlay = document.getElementById("consoleOverlay");
     consoleActive = !consoleActive;
     overlay.style.display = consoleActive ? "flex" : "none";
-    if (consoleActive) {
-        updateConsole();
-        consoleInterval = setInterval(updateConsole, 2000);
-    } else { clearInterval(consoleInterval); }
+    if (consoleActive) { updateConsole(); consoleInterval = setInterval(updateConsole, 2000); } else { clearInterval(consoleInterval); }
 }
 
 function formatBytes(bytes, decimals = 2) {
     if (!+bytes) return '0 B';
     const k = 1024;
-    const dm = decimals < 0 ? 0 : decimals;
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(decimals))} ${sizes[i]}`;
 }
 
-// Init
 setInterval(loadServers, 2000);
 loadServers();
 </script>

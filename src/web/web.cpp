@@ -124,7 +124,7 @@ void WebAdmin::start() {
 	// ---Statick---
 
 	svr->Get("/", [this](const httplib::Request&, httplib::Response& res) {
-		res.set_content(INDEX_HTML_, "text/html; charset=utf-8");
+		res.set_content(INDEX_HTML_PART_1 + INDEX_JS_PART_2, "text/html; charset=utf-8");
 		});
 
 	// --- API: get all servers ---
