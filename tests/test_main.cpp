@@ -16,7 +16,7 @@
 #include <asio.hpp>
 #include <asio/ssl.hpp>
 
-#include "logger/logger.h"
+#include "logger/Logger.h"
 #include "manager/Data.h"
 #include "manager/Server_manager.h"
 #include "manager/Setup_Wizard.h"

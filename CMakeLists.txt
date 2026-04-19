@@ -47,21 +47,19 @@ if(WIN32 AND MSVC)
             OPENSSL_SUPPRESS_DEPRECATED
     )
 endif()
-message(STATUS "Test sources:")
-message(STATUS "tests/test_main.cpp")
-message(STATUS "src/manager/Data.cpp")
+
 # ------------------ Tests ------------------
 enable_testing()
 
 add_executable(Obelisk_tests
     tests/test_main.cpp
-    src/logger/logger.cpp
+    src/logger/Logger.cpp
     src/manager/Data.cpp
     src/manager/Server_manager.cpp
-    src/manager/Setup_Wizard.cpp
+    src/manager/Setup_wizard.cpp
     src/server/Server_class.cpp
-    src/tls/tls_session.cpp
-    src/web/web.cpp
+    src/tls/Tls_session.cpp
+    src/web/Web.cpp
 )
 
 target_include_directories(Obelisk_tests PRIVATE ${SRC_DIR})

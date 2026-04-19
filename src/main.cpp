@@ -17,8 +17,8 @@
 #include "manager/Data.h"
 #include "server/Server_class.h"
 #include "manager/Server_manager.h"
-#include "logger/logger.h"
-#include "web/web.h"
+#include "logger/Logger.h"
+#include "web/Web.h"
 #include "manager/Setup_wizard.h"
 
 auto running = std::make_shared<std::atomic<bool>>(true);
