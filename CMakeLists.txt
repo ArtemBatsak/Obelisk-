@@ -20,6 +20,7 @@ find_package(asio CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(GTest CONFIG REQUIRED)
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE 
     CPPHTTPLIB_OPENSSL_SUPPORT
@@ -34,6 +35,7 @@ target_link_libraries(${PROJECT_NAME}
         httplib::httplib
         nlohmann_json::nlohmann_json
         Threads::Threads 
+
 )
 
 # ------------------ Windows specific ------------------
@@ -45,3 +47,35 @@ if(WIN32 AND MSVC)
             OPENSSL_SUPPRESS_DEPRECATED
     )
 endif()
+message(STATUS "Test sources:")
+message(STATUS "tests/test_main.cpp")
+message(STATUS "src/manager/Data.cpp")
+# ------------------ Tests ------------------
+enable_testing()
+
+add_executable(Obelisk_tests
+    tests/test_main.cpp
+    src/logger/logger.cpp
+    src/manager/Data.cpp
+    src/manager/Server_manager.cpp
+    src/manager/Setup_Wizard.cpp
+    src/server/Server_class.cpp
+    src/tls/tls_session.cpp
+    src/web/web.cpp
+)
+
+target_include_directories(Obelisk_tests PRIVATE ${SRC_DIR})
+
+target_link_libraries(Obelisk_tests
+    PRIVATE
+        GTest::gtest_main
+        spdlog::spdlog
+        asio::asio
+        OpenSSL::SSL
+        OpenSSL::Crypto
+        nlohmann_json::nlohmann_json
+        Threads::Threads
+)
+
+include(GoogleTest)
+gtest_discover_tests(Obelisk_tests)

@@ -10,6 +10,7 @@
       "name": "cpp-httplib",
       "features": [ "openssl" ]
     },
-    "nlohmann-json"
+    "nlohmann-json",
+    "gtest"
   ]
 }

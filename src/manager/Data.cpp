@@ -5,7 +5,9 @@
 std::string Server_struct::to_string() const {
     return "{ \"id\": " + std::to_string(id)
         + ", \"client_port\": " + std::to_string(client_port)
-        + ", \"comment\": \"" + comment + "\" }";
+        + ", \"comment\": \"" + comment + "\""
+        + ", \"total_traffic\": " + std::to_string(total_traffic)
+        + " }";
 }
 
 Server_struct Server_struct::from_string(const std::string& line) {
@@ -21,8 +23,17 @@ Server_struct Server_struct::from_string(const std::string& line) {
     entry.client_port = std::stoi(line.substr(pos1 + 15, pos2 - (pos1 + 15)));
 
     pos1 = line.find("\"comment\": \"");
-    pos2 = line.rfind("\"");
+    pos2 = line.find("\"", pos1 + 12);
     entry.comment = line.substr(pos1 + 12, pos2 - (pos1 + 12));
+
+    pos1 = line.find("\"total_traffic\": ");
+    if (pos1 != std::string::npos) {
+        pos2 = line.find("}", pos1);
+        entry.total_traffic = static_cast<uint64_t>(
+            std::stoull(line.substr(pos1 + 17, pos2 - (pos1 + 17)))
+            );
+    }
+
 
     return entry;
 }
