@@ -68,7 +68,7 @@ private:
 // This is a raw string literal containing the HTML, CSS, and JavaScript for the web admin interface.
 // You can put this in a separate .html file and read it at runtime, but for simplicity, it's included directly in the code.
 
-// Часть 1: HTML разметка и CSS стили
+
 static const std::string INDEX_HTML_PART_1 = R"raw(
 <!DOCTYPE html>
 <html lang="en">
@@ -172,7 +172,6 @@ static const std::string INDEX_HTML_PART_1 = R"raw(
 </div>
 )raw";
 
-// Часть 2: JavaScript логика
 static const std::string INDEX_JS_PART_2 = R"raw(
 <script>
 let currentEditId = null;
