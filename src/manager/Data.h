@@ -37,22 +37,26 @@ private:
     void read_id();
     void read_ports();
     int gen_id();
-    void save_all();
     bool is_port_available(int port);
 public:
-	
+    ~DataServers() {
+        save_all();
+        spdlog::info("DataServers destroyed. Final save completed.");
+    }
     DataServers();
     bool add_id(const std::string comment_);
     bool deleteServerById(uint32_t id);
 	bool updateServerComment(uint32_t id, const std::string& new_comment);
-
+    void save_all();
+    bool updateServerTraffic(uint32_t id, uint64_t total_traffic);
+    
     bool authorize_id(uint32_t id) const;
     int get_ports_by_id(int search_id) const;
     std::vector<Server_struct>  get_servers();
 	bool add_ports(int first, int second = 0);
     bool delete_port(int first, int second = 0);
 	std::string get_port_pool() const;
-
+	uint64_t get_total_traffic_by_id(uint32_t id) const;
 };
 
 uint32_t get_random(unsigned int min, unsigned int max);

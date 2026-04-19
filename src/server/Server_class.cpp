@@ -394,7 +394,7 @@ void GrayServer::splice_loop(
     std::string way)
 {
     auto self = shared_from_this();
-    auto buffer = std::make_shared<std::array<char, 4096>>();
+    auto buffer = std::make_shared<std::array<char, 64 * 1024>>();
 
     in_sock->async_read_some(
         asio::buffer(*buffer),

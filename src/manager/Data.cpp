@@ -1,43 +1,25 @@
 ﻿#include "manager/Data.h"
-
-
 // ---------------- Server_struct ----------------
 std::string Server_struct::to_string() const {
-    return "{ \"id\": " + std::to_string(id)
-        + ", \"client_port\": " + std::to_string(client_port)
-        + ", \"comment\": \"" + comment + "\""
-        + ", \"total_traffic\": " + std::to_string(total_traffic)
-        + " }";
+    nlohmann::json j;
+    j["id"] = id;
+    j["client_port"] = client_port;
+    j["comment"] = comment;
+    j["total_traffic"] = total_traffic;
+    return j.dump();
 }
 
 Server_struct Server_struct::from_string(const std::string& line) {
     Server_struct entry;
-    std::size_t pos1, pos2;
+    auto j = nlohmann::json::parse(line);
 
-    pos1 = line.find("\"id\": ");
-    pos2 = line.find(",", pos1);
-    entry.id = std::stoi(line.substr(pos1 + 6, pos2 - (pos1 + 6)));
-
-    pos1 = line.find("\"client_port\": ");
-    pos2 = line.find(",", pos1);
-    entry.client_port = std::stoi(line.substr(pos1 + 15, pos2 - (pos1 + 15)));
-
-    pos1 = line.find("\"comment\": \"");
-    pos2 = line.find("\"", pos1 + 12);
-    entry.comment = line.substr(pos1 + 12, pos2 - (pos1 + 12));
-
-    pos1 = line.find("\"total_traffic\": ");
-    if (pos1 != std::string::npos) {
-        pos2 = line.find("}", pos1);
-        entry.total_traffic = static_cast<uint64_t>(
-            std::stoull(line.substr(pos1 + 17, pos2 - (pos1 + 17)))
-            );
-    }
-
+    entry.id = j.value("id", 0);
+    entry.client_port = j.value("client_port", 0);
+    entry.comment = j.value("comment", std::string("0"));
+    entry.total_traffic = j.value("total_traffic", uint64_t{ 0 });
 
     return entry;
 }
-
 // ---------------- DataServers ----------------
 DataServers::DataServers() {
     std::srand(static_cast<unsigned int>(std::time(nullptr)));
@@ -140,6 +122,27 @@ bool DataServers::updateServerComment(uint32_t id, const std::string& new_commen
 		spdlog::error("Error: server with ID {} not found!", id);   
 		return false;
     }
+}
+
+bool DataServers::updateServerTraffic(uint32_t id, uint64_t total_traffic)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    bool found = false;
+    for (auto& s : servers_id) {
+        if (s.id == id) {
+            s.total_traffic = total_traffic;
+            found = true;
+            break;
+        }
+    }
+
+    if (found) {
+        //save_all();
+        return true;
+    }
+
+    spdlog::warn("Server {} not found while saving traffic", id);
+    return false;
 }
 
 bool DataServers::add_id(const std::string comment_) {
@@ -360,4 +363,15 @@ uint32_t get_random(unsigned int min, unsigned int max) {
     unsigned int range = max - min + 1;
 
     return min + (static_cast<uint32_t>(random_val % range));
+}
+
+uint64_t DataServers::get_total_traffic_by_id(uint32_t id) const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (const auto& s : servers_id) {
+        if (s.id == id) {
+            return s.total_traffic;
+        }
+    }
+    spdlog::warn("Server {} not found while getting total traffic", id);
+    return 0;
 }

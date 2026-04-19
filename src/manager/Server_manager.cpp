@@ -8,19 +8,27 @@ void ServerManager::add(std::shared_ptr<GrayServer> server) {
 void ServerManager::remove(uint32_t id) {
     std::lock_guard<std::mutex> lock(mtx_);
 
+    uint64_t traffic_total = 0;
     auto before = servers.size();
 
     servers.erase(
         std::remove_if(
             servers.begin(),
             servers.end(),
-            [id](const std::shared_ptr<GrayServer>& s) {
-                return s && s->get_id() == id;
+            [id, &traffic_total](const std::shared_ptr<GrayServer>& s) {
+                if (s && s->get_id() == id) {
+                    traffic_total = s->get_total_traffic();
+                    return true;
+                }
+                return false;
             }),
         servers.end()
     );
 
     if (before != servers.size()) {
+        if (auto data = data_servers.lock()) {
+            data->updateServerTraffic(id, traffic_total);
+        }
         spdlog::info("GrayServer {} removed from manager", id);
     }
 }
@@ -55,6 +63,99 @@ bool ServerManager::shutdown_id(uint32_t id) {
 
     spdlog::error("GrayServer {} not found in manager", id);
     return false;
+}
+
+uint64_t ServerManager::get_total_traffic(uint32_t id) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (const auto& s : servers) {
+        if (s && s->get_id() == id) {
+            return s->get_total_traffic();
+        }
+    }
+    return 0;
+}
+
+uint64_t ServerManager::get_total_speed_in(uint32_t id) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (const auto& s : servers) {
+        if (s && s->get_id() == id) {
+            return s->get_total_speed_in();
+        }
+    }
+    return 0;
+}
+
+uint64_t ServerManager::get_total_speed_out(uint32_t id) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (const auto& s : servers) {
+        if (s && s->get_id() == id) {
+            return s->get_total_speed_out();
+        }
+    }
+    return 0;
+}
+
+bool ServerManager::delete_server(uint32_t id) {
+    if (auto data = data_servers.lock()) {
+        data->updateServerTraffic(id, get_total_traffic(id));
+    }
+
+    shutdown_id(id);
+    if (auto data = data_servers.lock()) {
+        return data->deleteServerById(id);
+    }
+
+    spdlog::error("DataServers instance no longer exists");
+    return false;
+}
+
+void ServerManager::persist_online_traffic() {
+    std::vector<std::pair<uint32_t, uint64_t>> traffic_snapshot;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        for (const auto& s : servers) {
+            if (s) {
+                traffic_snapshot.emplace_back(s->get_id(), s->get_total_traffic());
+            }
+        }
+    }
+
+    if (auto data = data_servers.lock()) {
+        for (const auto& [id, total] : traffic_snapshot) {
+            data->updateServerTraffic(id, total);
+        }
+    }
+}
+
+void ServerManager::schedule_traffic_sync() {
+    auto self = shared_from_this();
+    traffic_sync_timer.expires_after(traffic_sync_interval);
+    traffic_sync_timer.async_wait([self](const asio::error_code& ec) {
+        if (ec == asio::error::operation_aborted || !self->running || !self->running->load()) {
+            return;
+        }
+        self->persist_online_traffic();
+        self->schedule_traffic_sync();
+        });
+}
+
+void ServerManager::save_data_to_disk() {
+    save_data_timer.expires_after(save_data_interval);
+    save_data_timer.async_wait([this](const asio::error_code& ec) {
+        if (ec == asio::error::operation_aborted || !this->running || !this->running->load()) {
+            return;
+        }
+		if (auto data = data_servers.lock()) {
+            data->save_all();
+            spdlog::info("DataServers state saved to disk");
+            return;
+        }
+        else {
+            spdlog::error("DataServers instance no longer exists, cannot save to disk");
+			return;
+        }
+		
+        });
 }
 
 bool ServerManager::server_online(uint32_t id) {
@@ -114,6 +215,7 @@ void ServerManager::init_acceptor() {
     data_acceptor = std::make_shared<tcp::acceptor>(io_context_, tcp::endpoint(tcp::v4(), data_port));
     spdlog::info("Data acceptor started on port {}", data_port);
     spdlog::info("Control acceptor started on port {}", control_port);
+    schedule_traffic_sync();
 }
 
 void ServerManager::async_accept_data() {

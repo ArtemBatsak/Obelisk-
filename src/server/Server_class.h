@@ -149,7 +149,7 @@ class GrayServer : public std::enable_shared_from_this<GrayServer> {
     void start_speed_monitor();
 
     // ============ HELPERS ============
-    static constexpr std::size_t BuffSize = 4096;
+    static constexpr std::size_t BuffSize = 256 * 1024;
 
     void enable_keepalive(std::shared_ptr<asio::ip::tcp::socket> sock);
 

@@ -68,7 +68,7 @@ private:
 // This is a raw string literal containing the HTML, CSS, and JavaScript for the web admin interface.
 // You can put this in a separate .html file and read it at runtime, but for simplicity, it's included directly in the code.
 
-static const std::string INDEX_HTML = R"raw(
+static const std::string INDEX_HTML_ = R"raw(
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -294,7 +294,7 @@ function updateText(id, value) {
 // --- Main Data Loader ---
 async function loadServers() {
     const data = await api("/api/servers");
-    if (!Array.isArray(data)) return;
+     if (!Array.isArray(data)) return;
 
     const container = document.getElementById("servers");
     const activeIds = new Set();
@@ -319,6 +319,13 @@ async function loadServers() {
                             Pairs: <span id="pairs-${server.id}" style="color:var(--accent)">0</span> | 
                             Latency: <span id="lat-${server.id}">0</span> ms
                         </div>
+                        <div class="small">
+                            Speed In: <span id="speed-in-${server.id}">0</span> |
+                            Speed Out: <span id="speed-out-${server.id}">0</span>
+                        </div>
+                        <div class="small">
+                            Total Traffic: <span id="traffic-${server.id}">0</span> 
+                        </div>
                         <div class="small">Port: ${server.client_port} (Client)</div>
                     </div>
                 </div>
@@ -331,6 +338,9 @@ async function loadServers() {
         updateText(`comm-${server.id}`, server.comment || "No description");
         updateText(`pairs-${server.id}`, server.active_pairs);
         updateText(`lat-${server.id}`, server.last_seen);
+        updateText(`speed-in-${server.id}`, formatBytes(server.speed_in || 0) + "/s");
+        updateText(`speed-out-${server.id}`, formatBytes(server.speed_out || 0) + "/s");
+        updateText(`traffic-${server.id}`, formatBytes(server.total_traffic || 0));
 
         // Update Indicator
         const ind = document.getElementById(`ind-${server.id}`);
@@ -486,6 +496,15 @@ function toggleConsole() {
         updateConsole();
         consoleInterval = setInterval(updateConsole, 2000);
     } else { clearInterval(consoleInterval); }
+}
+
+function formatBytes(bytes, decimals = 2) {
+    if (!+bytes) return '0 B';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 }
 
 // Init

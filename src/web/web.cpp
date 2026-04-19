@@ -28,6 +28,7 @@ WebAdmin::~WebAdmin() {
 
 }
 
+
 void WebAdmin::setup_tls_in_memory() {
 	auto pem = generate_self_signed_cert_pem();
 	this->mem_key = pem.first;
@@ -49,8 +50,8 @@ void WebAdmin::setup_tls_in_memory() {
 }
 
 void WebAdmin::apply_auth_middleware() {
-	
-	
+
+
 	svr->set_pre_routing_handler([this](const httplib::Request& req, httplib::Response& res) {
 
 		// Check for Authorization header
@@ -59,8 +60,8 @@ void WebAdmin::apply_auth_middleware() {
 
 			// Check if it starts with "Basic "
 			std::string base64_part = auth.substr(6);
-			
-			
+
+
 			std::string decoded = base64_decode(base64_part);
 
 			// The decoded string should be in the format "username:password"
@@ -69,14 +70,14 @@ void WebAdmin::apply_auth_middleware() {
 				std::string user = decoded.substr(0, sep);
 				std::string pass = decoded.substr(sep + 1);
 				// Verify credentials using ConfigManager
-				if (this->web_wizard->verify_password(user,pass)) {
-					
-					return httplib::Server::HandlerResponse::Unhandled; 
+				if (this->web_wizard->verify_password(user, pass)) {
+
+					return httplib::Server::HandlerResponse::Unhandled;
 				}
 			}
 		}
 
-		
+
 		res.status = 401;
 		res.set_header("WWW-Authenticate", "Basic realm=\"Admin Panel\"");
 		res.set_content("Access denied", "text/plain");
@@ -121,8 +122,9 @@ void WebAdmin::start() {
 	apply_auth_middleware();
 
 	// ---Statick---
-	svr->Get("/", [](const httplib::Request&, httplib::Response& res) {
-		res.set_content(INDEX_HTML, "text/html; charset=utf-8");
+
+	svr->Get("/", [this](const httplib::Request&, httplib::Response& res) {
+		res.set_content(INDEX_HTML_, "text/html; charset=utf-8");
 		});
 
 	// --- API: get all servers ---
@@ -137,9 +139,17 @@ void WebAdmin::start() {
 			bool online = web_server_manager->server_online(s.id);
 			int active_pairs = web_server_manager->get_active_pairs(s.id);
 			auto last_seen = -1;
-			if (online)  last_seen = web_server_manager->get_ping(s.id);
-			
-		
+			uint64_t speed_in = 0;
+			uint64_t speed_out = 0;
+			uint64_t total_traffic = s.total_traffic;
+			if (online) {
+				last_seen = web_server_manager->get_ping(s.id);
+				speed_in = web_server_manager->get_total_speed_in(s.id);
+				speed_out = web_server_manager->get_total_speed_out(s.id);
+				total_traffic = web_data_servers->get_total_traffic_by_id(s.id);
+			}
+
+
 
 			j.push_back({
 				{"id", s.id},
@@ -147,7 +157,10 @@ void WebAdmin::start() {
 				{"comment", s.comment},
 				{"last_seen", last_seen},
 				{"active_pairs", active_pairs},
-				{"online", online}
+				{"online", online},
+				{"speed_in", speed_in},
+				{"speed_out", speed_out},
+				{"total_traffic", total_traffic}
 				});
 		}
 
@@ -163,7 +176,7 @@ void WebAdmin::start() {
 			std::ifstream file(log_path, std::ios::binary | std::ios::ate);
 			if (file.is_open()) {
 				auto size = file.tellg();
-				auto to_read = std::min<std::streamoff>(size, 4096); 
+				auto to_read = std::min<std::streamoff>(size, 4096);
 				file.seekg(size - to_read);
 
 				std::vector<char> buffer(to_read);
@@ -186,7 +199,7 @@ void WebAdmin::start() {
 	svr->Post("/api/server/delete", [this](const httplib::Request& req, httplib::Response& res) {
 		try {
 			auto j = json::parse(req.body);
-			bool success = web_data_servers->deleteServerById(j.at("id").get<uint32_t>());
+			bool success = web_server_manager->delete_server(j.at("id").get<uint32_t>()); res.set_content(json({ {"status", success ? "ok" : "error"} }).dump(), "application/json");
 			res.set_content(json({ {"status", success ? "ok" : "error"} }).dump(), "application/json");
 		}
 		catch (...) { res.status = 400; }
@@ -243,11 +256,11 @@ void WebAdmin::start() {
 		try {
 			auto j = nlohmann::json::parse(req.body);
 
-			
+
 			int first = j.at("first").get<int>();
 			int second = j.at("second").get<int>();
 
-			
+
 			bool success = web_data_servers->add_ports(first, second);
 
 			res.set_content(nlohmann::json({ {"status", success ? "ok" : "error"} }).dump(), "application/json");
@@ -273,5 +286,5 @@ void WebAdmin::stop() {
 		svr->stop();
 		spdlog::info("Admin panel stopped");
 	}
-	
+
 }
