@@ -413,7 +413,7 @@ void GrayServer::splice_loop(
                     if (ec || bytes == 0) {
                         if (ec != asio::error::eof &&
                             ec != asio::error::operation_aborted) {
-                            spdlog::error("Pair {}: read error ({}): {}",
+                            spdlog::debug("Pair {}: read error ({}): {}",
                                 pair->pair_id, ec.value(), ec.message());
                         }
                         self->remove_pair(pair->pair_id);
@@ -434,7 +434,7 @@ void GrayServer::splice_loop(
                             if (ec_write) {
                                 if (ec_write != asio::error::eof &&
                                     ec_write != asio::error::operation_aborted) {
-                                    spdlog::error("Pair {}: write error ({}): {}",
+                                    spdlog::debug("Pair {}: write error ({}): {}",
                                         pair->pair_id, ec_write.value(), ec_write.message());
                                 }
                                 self->remove_pair(pair->pair_id);
@@ -592,14 +592,6 @@ void GrayServer::schedule_speed_monitor() {
         double speed_out = total_bytes_out / seconds;
 
         constexpr double BYTES_TO_MB = 1.0 / (1000.0 * 1000.0);
-
-        if (speed_in > 0 || speed_out > 0) {
-            spdlog::info(
-                "Server Speed: In: {:.2f} MB/s, Out: {:.2f} MB/s | Active pairs: {}",
-                speed_in * BYTES_TO_MB,
-                speed_out * BYTES_TO_MB,
-                self->link_pool.size());
-        }
 
         self->total_speed_in.store((uint64_t)speed_in, std::memory_order_relaxed);
         self->total_speed_out.store((uint64_t)speed_out, std::memory_order_relaxed);

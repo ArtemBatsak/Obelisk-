@@ -16,7 +16,7 @@
 #include <stdexcept>
 // Data structure for server information + functions to convert to/from string for file storage
 struct Server_struct {
-    int id=0;
+    uint32_t id=0;
     int client_port=0;
     std::string comment="0";
 	uint64_t total_traffic = 0;
@@ -53,10 +53,10 @@ public:
 	bool updateServerComment(uint32_t id, const std::string& new_comment);
     void save_all();
     bool updateServerTraffic(uint32_t id, uint64_t this_session_traffic);
-    void calculate_total_traffic(int id);
+    void calculate_total_traffic(uint32_t id);
 
     bool authorize_id(uint32_t id) const;
-    int get_ports_by_id(int search_id) const;
+    int get_ports_by_id(uint32_t search_id) const;
     std::vector<Server_struct>  get_servers();
 	bool add_ports(int first, int second = 0);
     bool delete_port(int first, int second = 0);

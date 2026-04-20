@@ -233,7 +233,7 @@ void ServerManager::async_accept_data() {
                 auto remote = sock->remote_endpoint(endpoint_ec);
                 std::string addr = endpoint_ec ? "unknown" : remote.address().to_string();
 
-                spdlog::info("New data connection accepted from {}", addr);
+                //spdlog::info("New data connection accepted from {}", addr);
                 self->handle_new_data(sock);
             }
 
@@ -250,7 +250,7 @@ void ServerManager::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock)
     
     asio::error_code endpoint_ec;
     auto remote = sock->remote_endpoint(endpoint_ec);
-    spdlog::info("Handling new data connection from {}", endpoint_ec ? "unknown" : remote.address().to_string());
+    spdlog::debug("Handling new data connection from {}", endpoint_ec ? "unknown" : remote.address().to_string());
 
     auto buf = std::make_shared<DATA_PACKET>();
 
@@ -269,7 +269,7 @@ void ServerManager::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock)
             
             uint32_t id = ntohl(buf->id);
             uint32_t otp = ntohl(buf->otp);
-            spdlog::info("Received data packet for server ID: {}, OTP: {}", id, otp);
+            spdlog::debug("Received data packet for server ID: {}, OTP: {}", id, otp);
             { 
                 
                 if (self->server_online(id)) {
@@ -277,7 +277,7 @@ void ServerManager::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock)
                     std::lock_guard<std::mutex> lock(self->mtx_);
                     for (auto& s : self->servers) {
                         if (s && s->get_id() == id) {
-                            spdlog::info("Forwarding data connection to GrayServer {}", id);
+                            spdlog::debug("Forwarding data connection to GrayServer {}", id);
                             s->handle_new_data(sock, otp);
                             return;
                         }

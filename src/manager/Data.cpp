@@ -147,7 +147,7 @@ bool DataServers::updateServerTraffic(uint32_t id, uint64_t this_session_traffic
     return false;
 }
 
-void DataServers::calculate_total_traffic(int id) {
+void DataServers::calculate_total_traffic(uint32_t id) {
     std::lock_guard<std::mutex> lock(mtx_);
     for (auto& s : servers_id) {
         if (s.id == id) {
@@ -229,7 +229,7 @@ bool DataServers::authorize_id(uint32_t id) const {
     return false;
 }
 
-int DataServers::get_ports_by_id(int search_id) const {
+int DataServers::get_ports_by_id(uint32_t search_id) const {
     std::lock_guard<std::mutex> lock(mtx_);
     for (const auto& s : servers_id) {
         if (s.id == search_id) {
