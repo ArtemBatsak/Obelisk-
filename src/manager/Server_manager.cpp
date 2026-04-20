@@ -28,6 +28,7 @@ void ServerManager::remove(uint32_t id) {
     if (before != servers.size()) {
         if (auto data = data_servers.lock()) {
             data->updateServerTraffic(id, traffic_total);
+			data->calculate_total_traffic(id);
         }
         spdlog::info("GrayServer {} removed from manager", id);
     }

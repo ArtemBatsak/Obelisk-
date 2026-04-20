@@ -6,6 +6,7 @@ std::string Server_struct::to_string() const {
     j["client_port"] = client_port;
     j["comment"] = comment;
     j["total_traffic"] = total_traffic;
+	j["this_session_traffic"] = this_session_traffic;
     return j.dump();
 }
 
@@ -17,6 +18,7 @@ Server_struct Server_struct::from_string(const std::string& line) {
     entry.client_port = j.value("client_port", 0);
     entry.comment = j.value("comment", std::string("0"));
     entry.total_traffic = j.value("total_traffic", uint64_t{ 0 });
+	entry.this_session_traffic = j.value("this_session_traffic", uint64_t{ 0 });
 
     return entry;
 }
@@ -124,25 +126,36 @@ bool DataServers::updateServerComment(uint32_t id, const std::string& new_commen
     }
 }
 
-bool DataServers::updateServerTraffic(uint32_t id, uint64_t total_traffic)
+bool DataServers::updateServerTraffic(uint32_t id, uint64_t this_session_traffic)
 {
     std::lock_guard<std::mutex> lock(mtx_);
     bool found = false;
     for (auto& s : servers_id) {
         if (s.id == id) {
-            s.total_traffic = total_traffic;
+            s.this_session_traffic = this_session_traffic;
             found = true;
             break;
         }
     }
 
     if (found) {
-        //save_all();
+        
         return true;
     }
 
     spdlog::warn("Server {} not found while saving traffic", id);
     return false;
+}
+
+void DataServers::calculate_total_traffic(int id) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (auto& s : servers_id) {
+        if (s.id == id) {
+            s.total_traffic += s.this_session_traffic;
+            s.this_session_traffic = 0;
+            break;
+        }
+    }
 }
 
 bool DataServers::add_id(const std::string comment_) {
@@ -369,7 +382,7 @@ uint64_t DataServers::get_total_traffic_by_id(uint32_t id) const {
     std::lock_guard<std::mutex> lock(mtx_);
     for (const auto& s : servers_id) {
         if (s.id == id) {
-            return s.total_traffic;
+            return s.total_traffic + s.this_session_traffic;
         }
     }
     spdlog::warn("Server {} not found while getting total traffic", id);

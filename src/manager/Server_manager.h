@@ -42,7 +42,6 @@ public:
         save_data_timer.cancel();
         if (control_acceptor && control_acceptor->is_open()) control_acceptor->close();
         if (data_acceptor && data_acceptor->is_open()) data_acceptor->close();
-		savedata_to_disk(); 
         shutdown_all();
 	}
     
@@ -87,10 +86,11 @@ private:
     std::vector<std::shared_ptr<GrayServer>> servers;
     std::shared_ptr<asio::ip::tcp::acceptor> data_acceptor;
     std::shared_ptr<asio::ip::tcp::acceptor> control_acceptor;
+    std::vector<std::pair<uint32_t, uint64_t>> previous_traffic_snapshot;
     asio::steady_timer traffic_sync_timer{ io_context_ };
 	asio::steady_timer save_data_timer{ io_context_ };
     std::chrono::seconds traffic_sync_interval{ 1 };
-	std::chrono::seconds save_data_interval{ 600 }; // Evry 10 minutes we wiil save data to disk
+	std::chrono::seconds save_data_interval{ 600 }; // Every 10 minutes we will save data to disk
 };
 
 

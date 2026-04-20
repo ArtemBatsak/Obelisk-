@@ -20,6 +20,7 @@ struct Server_struct {
     int client_port=0;
     std::string comment="0";
 	uint64_t total_traffic = 0;
+	uint64_t this_session_traffic = 0;
     std::string to_string() const;
     static Server_struct from_string(const std::string& line);
 };
@@ -40,6 +41,9 @@ private:
     bool is_port_available(int port);
 public:
     ~DataServers() {
+        for (const auto& s : servers_id) {
+            calculate_total_traffic(s.id);
+        }
         save_all();
         spdlog::info("DataServers destroyed. Final save completed.");
     }
@@ -48,8 +52,9 @@ public:
     bool deleteServerById(uint32_t id);
 	bool updateServerComment(uint32_t id, const std::string& new_comment);
     void save_all();
-    bool updateServerTraffic(uint32_t id, uint64_t total_traffic);
-    
+    bool updateServerTraffic(uint32_t id, uint64_t this_session_traffic);
+    void calculate_total_traffic(int id);
+
     bool authorize_id(uint32_t id) const;
     int get_ports_by_id(int search_id) const;
     std::vector<Server_struct>  get_servers();
