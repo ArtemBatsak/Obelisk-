@@ -321,7 +321,7 @@ function formatBytes(bytes, decimals = 2) {
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(decimals))} ${sizes[i]}`;
 }
 
-setInterval(loadServers, 2000);
+setInterval(loadServers, 1000);
 loadServers();
 </script>
 </body>
