@@ -3,9 +3,17 @@
 bool ConfigManager::check_config() {
     std::ifstream file("config.json");
 
+    if (!file.good()) {
+        return false;
+    }
 
-    if (file.good()) load();
-    return file.good();
+    try {
+        load();
+        return true;
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to parse config.json: {}", e.what());
+        return false;
+    }
 }
 
 void ConfigManager::set_up() {

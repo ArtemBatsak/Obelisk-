@@ -277,6 +277,12 @@ bool DataServers::authorize_id(uint32_t id, const std::string& certificate_pem) 
     for (const auto& s : servers_id) {
         if (s.id == id) {
             if (!certificate_pem.empty()) {
+                // Debug logging
+                if (s.certificate != certificate_pem) {
+                    spdlog::error("Certificate mismatch for ID {}", id);
+                    spdlog::debug("Expected: {}", s.certificate);
+                    spdlog::debug("Received: {}", certificate_pem);
+                }
                 return s.certificate == certificate_pem;
             }
             return true;
@@ -459,3 +465,4 @@ bool DataServers::read_server_config_file(uint32_t id, std::string& content) con
     content.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     return !content.empty();
 }
+

@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <iostream>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
@@ -16,10 +17,19 @@
 #include <asio.hpp>
 #include <asio/ssl.hpp>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <csignal>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 #include "logger/Logger.h"
 #include "manager/Data.h"
 #include "manager/Server_manager.h"
 #include "manager/Setup_Wizard.h"
+#include "tls/Tls_session.h"
 
 namespace fs = std::filesystem;
 using asio::ip::tcp;
@@ -65,23 +75,48 @@ namespace {
             uint32_t data_port{};
         };
 
-        explicit TestGrayConnector(asio::io_context& io)
+        explicit TestGrayConnector(asio::io_context& io, const std::string& cert_pem = {}, const std::string& key_pem = {})
             : io_(io),
             ssl_ctx_(asio::ssl::context::tlsv12_client),
-            ssl_sock_(std::make_shared<asio::ssl::stream<tcp::socket>>(io_, ssl_ctx_)) {
+            ssl_sock_(nullptr) {  
             ssl_ctx_.set_verify_mode(asio::ssl::verify_none);
             ssl_ctx_.set_options(
                 asio::ssl::context::default_workarounds |
                 asio::ssl::context::no_sslv2 |
                 asio::ssl::context::no_sslv3
             );
+
+            if (!cert_pem.empty() && !key_pem.empty()) {
+                const bool loaded = load_cert_and_key_into_context(ssl_ctx_, cert_pem, key_pem);
+                if (!loaded) {
+                    std::cout << "[TestGrayConnector] ERROR: Failed to load certificate!" << std::endl;
+                    throw std::runtime_error("Failed to load test client certificate into SSL context");
+                }
+                std::cout << "[TestGrayConnector] Certificate loaded successfully!" << std::endl;
+            } else {
+                std::cout << "[TestGrayConnector] WARNING: cert_pem.empty()=" << cert_pem.empty() 
+                          << ", key_pem.empty()=" << key_pem.empty() << std::endl;
+            }
+                
+            ssl_sock_ = std::make_shared<asio::ssl::stream<tcp::socket>>(io_, ssl_ctx_);
+            std::cout << "[TestGrayConnector] SSL socket created successfully!" << std::endl;
         }
 
         AuthResult connect_to_obelisk_server(const std::string& server_ip, uint16_t control_port, uint32_t id_client, uint32_t pool_size) {
             tcp::resolver resolver(io_);
             auto endpoints = resolver.resolve(server_ip, std::to_string(control_port));
             asio::connect(ssl_sock_->lowest_layer(), endpoints);
-            ssl_sock_->handshake(asio::ssl::stream_base::client);
+            
+            std::cout << "[CLIENT] Connected to " << server_ip << ":" << control_port << std::endl;
+            std::cout << "[CLIENT] About to perform SSL handshake..." << std::endl;
+            
+            try {
+                ssl_sock_->handshake(asio::ssl::stream_base::client);
+                std::cout << "[CLIENT] Handshake successful!" << std::endl;
+            } catch (const std::exception& e) {
+                std::cout << "[CLIENT] Handshake failed: " << e.what() << std::endl;
+                throw;
+            }  
 
             std::array<uint32_t, 2> req_buf{};
             req_buf[0] = htonl(id_client);
@@ -178,9 +213,10 @@ namespace {
         std::condition_variable cv_;
         std::vector<std::shared_ptr<tcp::socket>> data_sockets_;
     };
-
-    TEST(ConfigManagerTest, CreatesAndLoadsConfigFile) {
+	/// ====== Test 1: ConfigManager setup wizard creates and loads config file ======
+    TEST(ConfigManagerTest, SetupWizardCreatesAndLoadsConfigFile) {
         ScopedTempDir temp;
+        SCOPED_TRACE("Class under test: ConfigManager");
 
         auto wizard = std::make_shared<ConfigManager>();
         EXPECT_FALSE(wizard->check_config());
@@ -203,15 +239,12 @@ namespace {
         EXPECT_FALSE(cfg.admin_password_hash.empty());
         EXPECT_FALSE(cfg.admin_password_salt.empty());
     }
-
-    TEST(StartupAndServerFlowTest, CreatesCoreObjectsAuthorizesGrayServerTransfers10MbAndShutsDown) {
+	/// ====== Test 2: Main process starts with prepared config and stops on signal ======
+    TEST(ObeliskMainProcessTest, MainStartsWithPreparedConfigAndStopsOnSignal) {
         ScopedTempDir temp;
-
-        init_logging();
-        spdlog::info("Obelisk started");
+        SCOPED_TRACE("Class under test: main (application startup flow)");
 
         asio::io_context io;
-
         const uint16_t control_port = reserve_free_port(io);
         const uint16_t data_port = reserve_free_port(io);
         const uint16_t web_port = reserve_free_port(io);
@@ -219,100 +252,308 @@ namespace {
         {
             std::ofstream cfg("config.json");
             cfg << "{\n"
-                "  \"control_port\": " << control_port << ",\n"
-                "  \"data_port\": " << data_port << ",\n"
-                "  \"web_port\": " << web_port << ",\n"
-                "  \"admin_password_hash\": \"h\",\n"
-                "  \"admin_username\": \"admin\",\n"
-                "  \"admin_password_salt\": \"s\"\n"
-                "}";
+                << "  \"control_port\": " << control_port << ",\n"
+                << "  \"data_port\": " << data_port << ",\n"
+                << "  \"web_port\": " << web_port << ",\n"
+                << "  \"admin_password_hash\": \"h\",\n"
+                << "  \"admin_username\": \"admin\",\n"
+                << "  \"admin_password_salt\": \"s\"\n"
+                << "}";
         }
 
-        auto wizard = std::make_shared<ConfigManager>();
-        ASSERT_TRUE(wizard->check_config());
-        auto cfg = wizard->get_config();
+        const auto test_binary = fs::path(::testing::internal::GetArgvs()[0]);
+#ifdef _WIN32
+        const auto obelisk_binary = (test_binary.parent_path() / "Obelisk.exe").lexically_normal();
+#else
+        const auto obelisk_binary = (test_binary.parent_path() / "Obelisk").lexically_normal();
+#endif
+        ASSERT_TRUE(fs::exists(obelisk_binary));
+
+#ifdef _WIN32
+        STARTUPINFOA si{};
+        si.cb = sizeof(si);
+        PROCESS_INFORMATION pi{};
+
+        std::string cmd = "\"" + obelisk_binary.string() + "\"";
+        ASSERT_TRUE(CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi));
+
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+
+        DWORD code = 0;
+        ASSERT_TRUE(GetExitCodeProcess(pi.hProcess, &code));
+        EXPECT_EQ(code, STILL_ACTIVE) << "Obelisk main exited too early";
+
+        ASSERT_TRUE(TerminateProcess(pi.hProcess, 0));
+        ASSERT_EQ(WaitForSingleObject(pi.hProcess, 5000), WAIT_OBJECT_0);
+
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+#else
+        pid_t pid = fork();
+        ASSERT_NE(pid, -1);
+
+        if (pid == 0) {
+            execl(obelisk_binary.c_str(), obelisk_binary.c_str(), (char*)nullptr);
+            _exit(127);
+        }
+
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+
+        int status = 0;
+        pid_t wait_result = waitpid(pid, &status, WNOHANG);
+        EXPECT_EQ(wait_result, 0) << "Obelisk main exited too early";
+
+        ASSERT_EQ(kill(pid, SIGINT), 0);
+        ASSERT_EQ(waitpid(pid, &status, 0), pid);
+        EXPECT_TRUE(WIFEXITED(status));
+#endif
+    }
+	/// ====== Test 3: Full integration flow - create server, connect, transfer data, close connection, delete server ======
+    TEST(ServerManagerIntegrationFlowTest, FullDataPathCreateConnectTransferCloseDelete) {
+        ScopedTempDir temp;
+
+        init_logging();
+        asio::io_context io;
+
+        const uint16_t control_port = reserve_free_port(io);
+        const uint16_t data_port = reserve_free_port(io);
 
         auto running = std::make_shared<std::atomic<bool>>(true);
         auto data_servers = std::make_shared<DataServers>();
         ASSERT_TRUE(data_servers->add_ports(31000, 31010));
-        ASSERT_TRUE(data_servers->add_id("integration-gray"));
 
-        auto servers = data_servers->get_servers();
-        ASSERT_EQ(servers.size(), 1u);
-        const uint32_t gray_id = static_cast<uint32_t>(servers[0].id);
+        {
+            SCOPED_TRACE("Class under test: DataServers (2.1 create server)");
+            ASSERT_TRUE(data_servers->add_id("integration-gray", control_port, "127.0.0.1"));
+            auto servers = data_servers->get_servers();
+            ASSERT_EQ(servers.size(), 1u);
+        }
+
+        const auto gray_id = static_cast<uint32_t>(data_servers->get_servers().front().id);
 
         auto server_manager = std::make_shared<ServerManager>(
             running,
-            cfg.control_port,
-            cfg.data_port,
+            control_port,
+            data_port,
             data_servers,
             io.get_executor()
         );
 
-        ASSERT_NE(wizard, nullptr);
-        ASSERT_NE(data_servers, nullptr);
-        ASSERT_NE(server_manager, nullptr);
-
         server_manager->start();
-
         std::thread io_thread([&io]() { io.run(); });
 
-        TestGrayConnector test_gray(io);
-        auto auth = test_gray.connect_to_obelisk_server("127.0.0.1", static_cast<uint16_t>(cfg.control_port), gray_id, 1);
-        test_gray.set_assigned_data_port(static_cast<uint16_t>(auth.data_port));
+        std::string config_json_text;
+        ASSERT_TRUE(data_servers->read_server_config_file(gray_id, config_json_text));
+        auto server_cfg = nlohmann::json::parse(config_json_text);
 
-        EXPECT_EQ(auth.server_id, gray_id);
-        EXPECT_TRUE(server_manager->server_online(gray_id));
+        const std::string client_cert = server_cfg.at("CERTIFICATE").get<std::string>();
+        const std::string client_key = server_cfg.at("PRIVATE_KEY").get<std::string>();
 
-        auto gray_data_socket = test_gray.wait_for_data_socket(std::chrono::seconds(3));
-        ASSERT_NE(gray_data_socket, nullptr);
+        TestGrayConnector test_gray(io, client_cert, client_key);
 
-        tcp::socket external_client(io);
-        external_client.connect({ asio::ip::address_v4::loopback(), static_cast<uint16_t>(auth.client_port) });
+        {
+            SCOPED_TRACE("Class under test: ServerManager (2.2 connect + server registered)");
+            auto auth = test_gray.connect_to_obelisk_server("127.0.0.1", control_port, gray_id, 1);
+            test_gray.set_assigned_data_port(static_cast<uint16_t>(auth.data_port));
+            EXPECT_EQ(auth.server_id, gray_id);
+            EXPECT_TRUE(server_manager->server_online(gray_id));
 
-        constexpr std::size_t payload_size = 10 * 1024 * 1024;
-        std::vector<char> payload(payload_size, 'K');
-        std::vector<char> received(payload_size, 0);
+            auto gray_data_socket = test_gray.wait_for_data_socket(std::chrono::seconds(3));
+            ASSERT_NE(gray_data_socket, nullptr);
 
-        std::thread reader([&]() {
-            asio::read(*gray_data_socket, asio::buffer(received));
-            });
+            tcp::socket external_client(io);
+            external_client.connect({ asio::ip::address_v4::loopback(), static_cast<uint16_t>(auth.client_port) });
 
-        asio::write(external_client, asio::buffer(payload));
-        reader.join();
+            {
+                SCOPED_TRACE("Class under test: GrayServer data channel (2.3 transfer 10MB)");
+                constexpr std::size_t payload_size = 10 * 1024 * 1024;
+                std::vector<char> payload(payload_size, 'K');
+                std::vector<char> received(payload_size, 0);
 
-        EXPECT_EQ(payload, received);
+                std::thread reader([&]() {
+                    asio::read(*gray_data_socket, asio::buffer(received));
+                    });
 
-        EXPECT_GE(server_manager->get_active_pairs(gray_id), 1u);
-        EXPECT_GE(server_manager->get_ping(gray_id), 0u);
+                asio::write(external_client, asio::buffer(payload));
+                reader.join();
+                EXPECT_EQ(payload, received);
+            }
 
-        asio::error_code ec;
-        external_client.shutdown(tcp::socket::shutdown_both, ec);
-        external_client.close(ec);
+            {
+                SCOPED_TRACE("Class under test: ServerManager (2.4 close connection shrinks active vector)");
+                EXPECT_GE(server_manager->get_active_pairs(gray_id), 1u);
+                asio::error_code ec;
+                external_client.shutdown(tcp::socket::shutdown_both, ec);
+                external_client.close(ec);
+                std::this_thread::sleep_for(std::chrono::milliseconds(400));
+                EXPECT_EQ(server_manager->get_active_pairs(gray_id), 0u);
+            }
+        }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(400));
-        EXPECT_EQ(server_manager->get_active_pairs(gray_id), 0u);
+        {
+            SCOPED_TRACE("Class under test: DataServers + ServerManager (2.5 delete server)");
+            EXPECT_TRUE(server_manager->delete_server(gray_id));
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            EXPECT_FALSE(server_manager->server_online(gray_id));
+            EXPECT_TRUE(data_servers->get_servers().empty());
+        }
 
-        EXPECT_TRUE(server_manager->shutdown_id(gray_id));
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
-        EXPECT_FALSE(server_manager->server_online(gray_id));
-
-        auto after = data_servers->get_servers();
-        ASSERT_EQ(after.size(), 1u);
-        EXPECT_GE(after[0].total_traffic, 0u);
-
-        test_gray.stop();
-        server_manager->shutdown_all();
-        *running = false;
-        io.stop();
+        {
+            SCOPED_TRACE("Class under test: application shutdown (2.6 finish)");
+            test_gray.stop();
+            server_manager->shutdown_all();
+            *running = false;
+            io.stop();
+        }
 
         if (io_thread.joinable()) {
             io_thread.join();
         }
-
-        server_manager.reset();
-        data_servers.reset();
-        wizard.reset();
     }
 
-}
+    bool load_cert_and_key_into_context(asio::ssl::context& ctx,
+        const std::string& cert_pem,
+        const std::string& key_pem)
+    {
+        SSL_CTX* ssl_ctx = ctx.native_handle();
+        if (!ssl_ctx) {
+            std::cout << "[load_cert] ERROR: ssl_ctx is NULL" << std::endl;
+            return false;
+        }
+
+        BIO* bio_cert = BIO_new_mem_buf(cert_pem.data(), static_cast<int>(cert_pem.size()));
+        BIO* bio_key = BIO_new_mem_buf(key_pem.data(), static_cast<int>(key_pem.size()));
+
+        if (!bio_cert || !bio_key) {
+            std::cout << "[load_cert] ERROR: Failed to create BIO" << std::endl;
+            return false;
+        }
+
+        X509* x509 = PEM_read_bio_X509(bio_cert, nullptr, nullptr, nullptr);
+        EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio_key, nullptr, nullptr, nullptr);
+
+        if (!x509) std::cout << "[load_cert] ERROR: x509 parsing failed" << std::endl;
+        if (!pkey) std::cout << "[load_cert] ERROR: pkey parsing failed" << std::endl;
+
+        BIO_free(bio_cert);
+        BIO_free(bio_key);
+
+        if (!x509 || !pkey) {
+            if (x509) X509_free(x509);
+            if (pkey) EVP_PKEY_free(pkey);
+            return false;
+        }
+
+        int ret1 = SSL_CTX_use_certificate(ssl_ctx, x509);
+        int ret2 = SSL_CTX_use_PrivateKey(ssl_ctx, pkey);
+        int ret3 = SSL_CTX_check_private_key(ssl_ctx);
+
+        std::cout << "[load_cert] SSL_CTX_use_certificate: " << ret1 << std::endl;
+        std::cout << "[load_cert] SSL_CTX_use_PrivateKey: " << ret2 << std::endl;
+        std::cout << "[load_cert] SSL_CTX_check_private_key: " << ret3 << std::endl;
+
+        bool ok = ret1 == 1 && ret2 == 1 && ret3 == 1;
+
+        X509_free(x509);
+        EVP_PKEY_free(pkey);
+
+        std::cout << "[load_cert] Result: " << (ok ? "SUCCESS" : "FAILED") << std::endl;
+        return ok;
+    }
+	/// ====== Test 4: ServerManager handles port already in use gracefully ======
+    TEST(ServerManagerTest, HandlePortAlreadyInUse) {
+        ScopedTempDir temp;
+        init_logging();
+        asio::io_context io;
+
+        tcp::acceptor dummy_acceptor(io, tcp::endpoint(tcp::v4(), 0));
+        uint16_t busy_port = dummy_acceptor.local_endpoint().port();
+
+        auto data_servers = std::make_shared<DataServers>();
+        auto running = std::make_shared<std::atomic<bool>>(true);
+
+        auto server_manager = std::make_shared<ServerManager>(
+            running, busy_port, 12345, data_servers, io.get_executor()
+        );
+
+        EXPECT_NO_THROW(server_manager->start());
+    }
+
+	/// ====== Test 5: Multiple clients connect simultaneously ======
+    TEST(ServerManagerIntegrationFlowTest, MultipleClientsConnectSimultaneously) {
+        ScopedTempDir temp;
+        init_logging();
+        asio::io_context io;
+
+        const uint16_t control_port = reserve_free_port(io);
+        const uint16_t data_port = reserve_free_port(io);
+
+        auto running = std::make_shared<std::atomic<bool>>(true);
+        auto data_servers = std::make_shared<DataServers>();
+        ASSERT_TRUE(data_servers->add_ports(31000, 31020));
+        for (int i = 0; i < 5; ++i) {
+            ASSERT_TRUE(data_servers->add_id("server-" + std::to_string(i), control_port, "127.0.0.1"));
+        }
+
+        auto server_manager = std::make_shared<ServerManager>(
+            running, control_port, data_port, data_servers, io.get_executor()
+        );
+
+        server_manager->start();
+        std::thread io_thread([&io]() { io.run(); });
+        auto servers = data_servers->get_servers();
+        std::vector<std::thread> client_threads;
+        std::atomic<int> successful_connections{ 0 };
+
+        for (const auto& srv : servers) {
+            client_threads.emplace_back([&, srv]() {
+                try {
+                    std::string config_json_text;
+                    ASSERT_TRUE(data_servers->read_server_config_file(srv.id, config_json_text));
+                    auto server_cfg = nlohmann::json::parse(config_json_text);
+
+                    const std::string client_cert = server_cfg.at("CERTIFICATE").get<std::string>();
+                    const std::string client_key = server_cfg.at("PRIVATE_KEY").get<std::string>();
+
+                    TestGrayConnector connector(io, client_cert, client_key);
+                    auto auth = connector.connect_to_obelisk_server("127.0.0.1", control_port, srv.id, 1);
+
+                    if (auth.server_id == srv.id) {
+                        successful_connections++;
+                    }
+                    connector.stop();
+                }
+                catch (...) {
+                    // Игнорируем ошибки
+                }
+                });
+        }
+
+        for (auto& t : client_threads) {
+            if (t.joinable()) t.join();
+        }
+
+        EXPECT_EQ(successful_connections.load(), 5);
+
+        server_manager->shutdown_all();
+        *running = false;
+        io.stop();
+        if (io_thread.joinable()) io_thread.join();
+    }
+
+    // ======= Test 6: Handles Corrupted Config File ======
+    TEST(ConfigManagerTest, HandlesCorruptedConfigFile) {
+        ScopedTempDir temp;
+        
+
+        {
+            std::ofstream cfg("config.json");
+            cfg << "{ invalid json }";
+        }
+        
+        auto config_mgr = std::make_shared<ConfigManager>();
+        
+        
+        EXPECT_FALSE(config_mgr->check_config());
+    }
+} // namespace
