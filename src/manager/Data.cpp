@@ -1,4 +1,5 @@
-﻿#include "manager/Data.h"
+#include "manager/Data.h"
+#include "tls/Tls_session.h"
 // ---------------- Server_struct ----------------
 std::string Server_struct::to_string() const {
     nlohmann::json j;
@@ -7,6 +8,7 @@ std::string Server_struct::to_string() const {
     j["comment"] = comment;
     j["total_traffic"] = total_traffic;
 	j["this_session_traffic"] = this_session_traffic;
+    j["certificate"] = certificate;
     return j.dump();
 }
 
@@ -19,6 +21,7 @@ Server_struct Server_struct::from_string(const std::string& line) {
     entry.comment = j.value("comment", std::string("0"));
     entry.total_traffic = j.value("total_traffic", uint64_t{ 0 });
 	entry.this_session_traffic = j.value("this_session_traffic", uint64_t{ 0 });
+    entry.certificate = j.value("certificate", std::string(""));
 
     return entry;
 }
@@ -33,6 +36,34 @@ DataServers::DataServers() {
 void DataServers::ensure_file() {
     std::ofstream(id_file, std::ios::app).close();
     std::ofstream(port_file, std::ios::app).close();
+    std::filesystem::create_directories(configs_dir);
+}
+
+std::filesystem::path DataServers::get_server_config_path(uint32_t id) const {
+    return configs_dir / ("server_" + std::to_string(id) + ".json");
+}
+
+bool DataServers::write_server_config_file(const Server_struct& entry, int control_port, const std::string& server_ip, const std::string& private_key) {
+    nlohmann::json config_json;
+    config_json["CONTROL_PORT"] = control_port;
+    config_json["ID_CLIENT"] = entry.id;
+    config_json["LOCAL_IP"] = "127.0.0.1";
+    config_json["LOCAL_PORT"] = "";
+    config_json["POOL_SIZE"] = 10;
+    config_json["SERVER_IP"] = server_ip;
+    config_json["CERTIFICATE"] = entry.certificate;
+    config_json["PRIVATE_KEY"] = private_key;
+
+    try {
+        std::ofstream out(get_server_config_path(entry.id), std::ios::trunc);
+        out << config_json.dump(4);
+        out.close();
+        return out.good();
+    }
+    catch (const std::exception& e) {
+        spdlog::error("Failed to write config for server {}: {}", entry.id, e.what());
+        return false;
+    }
 }
 
 void DataServers::read_id() {
@@ -158,7 +189,7 @@ void DataServers::calculate_total_traffic(uint32_t id) {
     }
 }
 
-bool DataServers::add_id(const std::string comment_) {
+bool DataServers::add_id(const std::string comment_, int control_port, const std::string& server_ip) {
     std::lock_guard<std::mutex> lock(mtx_);
     int selected_port = -1;
     int new_id;
@@ -187,7 +218,21 @@ bool DataServers::add_id(const std::string comment_) {
     entry.client_port = selected_port;
     entry.comment = comment_;
 
+    auto pem = generate_self_signed_cert_pem();
+    entry.certificate = pem.second;
+
+    if (entry.certificate.empty() || pem.first.empty()) {
+        spdlog::error("Error: failed to generate certificate for server {}", new_id);
+        ports.insert(selected_port);
+        return false;
+    }
+
     servers_id.push_back(entry);
+    if (!write_server_config_file(entry, control_port, server_ip, pem.first)) {
+        servers_id.pop_back();
+        ports.insert(selected_port);
+        return false;
+    }
     save_all();
     
     spdlog::info("Server created with ID {}, client_port={}", new_id, selected_port);
@@ -219,10 +264,13 @@ void DataServers::save_all() {
     spdlog::info("Servers and ports state saved.");
 }
 
-bool DataServers::authorize_id(uint32_t id) const {
+bool DataServers::authorize_id(uint32_t id, const std::string& certificate_pem) const {
     std::lock_guard<std::mutex> lock(mtx_);
     for (const auto& s : servers_id) {
         if (s.id == id) {
+            if (!certificate_pem.empty()) {
+                return s.certificate == certificate_pem;
+            }
             return true;
         }
     }
@@ -387,4 +435,19 @@ uint64_t DataServers::get_total_traffic_by_id(uint32_t id) const {
     }
     spdlog::warn("Server {} not found while getting total traffic", id);
     return 0;
+}
+
+bool DataServers::read_server_config_file(uint32_t id, std::string& content) const {
+    auto path = get_server_config_path(id);
+    if (!std::filesystem::exists(path)) {
+        return false;
+    }
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) {
+        return false;
+    }
+
+    content.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return !content.empty();
 }

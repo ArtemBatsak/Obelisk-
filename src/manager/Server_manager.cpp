@@ -1,3 +1,5 @@
+#include <openssl/pem.h>
+#include <openssl/ssl.h>
 #include "Server_manager.h"
 //=============ServerManager implementation=============
 void ServerManager::add(std::shared_ptr<GrayServer> server) {
@@ -206,6 +208,11 @@ void ServerManager::start_up_tls() {
         return;
     }
 
+    ssl_ctx.set_verify_mode(asio::ssl::verify_peer | asio::ssl::verify_fail_if_no_peer_cert);
+    ssl_ctx.set_verify_callback([](bool, asio::ssl::verify_context&) {
+        return true;
+        });
+
     spdlog::info("Self-signed certificate generated (in memory)");
 
   
@@ -338,10 +345,36 @@ asio::awaitable<void> ServerManager::async_authorize(std::shared_ptr<asio::ssl::
         uint32_t id = ntohl(req.id);
         uint32_t pool_size = ntohl(req.pool_size);
 
+        X509* peer_cert = SSL_get_peer_certificate(ssl_sock->native_handle());
+        if (!peer_cert) {
+            throw std::runtime_error("Client certificate is missing");
+        }
+
+        std::string peer_cert_pem;
+        {
+            BIO* cert_bio = BIO_new(BIO_s_mem());
+            if (!cert_bio || PEM_write_bio_X509(cert_bio, peer_cert) != 1) {
+                if (cert_bio) {
+                    BIO_free(cert_bio);
+                }
+                X509_free(peer_cert);
+                throw std::runtime_error("Failed to serialize client certificate");
+            }
+
+            char* cert_ptr = nullptr;
+            long cert_len = BIO_get_mem_data(cert_bio, &cert_ptr);
+            if (cert_len > 0 && cert_ptr) {
+                peer_cert_pem.assign(cert_ptr, static_cast<size_t>(cert_len));
+            }
+
+            BIO_free(cert_bio);
+        }
+        X509_free(peer_cert);
+
         //  Check authorization
         if (auto shared_data = data_servers.lock())
         {
-            if (shared_data->authorize_id(id)) {
+            if (shared_data->authorize_id(id, peer_cert_pem)) {
 
                 auto p = shared_data->get_ports_by_id(id);
                 auto server = std::make_shared<GrayServer>(
@@ -360,6 +393,9 @@ asio::awaitable<void> ServerManager::async_authorize(std::shared_ptr<asio::ssl::
 
 				spdlog::info("GrayServer {} authorized and started with pool size {}", id, pool_size);
             }
+            else {
+                throw std::runtime_error("Certificate mismatch or unknown server ID");
+            }
 
         }
         else {
@@ -374,4 +410,3 @@ asio::awaitable<void> ServerManager::async_authorize(std::shared_ptr<asio::ssl::
         ssl_sock->lowest_layer().close(ec);
     }
 }
-

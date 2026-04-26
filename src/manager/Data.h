@@ -14,6 +14,7 @@
 #include <nlohmann/json.hpp>
 #include <openssl/rand.h>
 #include <stdexcept>
+#include <filesystem>
 // Data structure for server information + functions to convert to/from string for file storage
 struct Server_struct {
     uint32_t id=0;
@@ -21,6 +22,7 @@ struct Server_struct {
     std::string comment="0";
 	uint64_t total_traffic = 0;
 	uint64_t this_session_traffic = 0;
+    std::string certificate = "";
     std::string to_string() const;
     static Server_struct from_string(const std::string& line);
 };
@@ -33,8 +35,11 @@ private:
     std::string id_file = "Servers.txt";
     std::set<int> ports;
     std::string port_file = "Port.txt";
+    std::filesystem::path configs_dir = "Gray_servers config";
 
     void ensure_file();
+    bool write_server_config_file(const Server_struct& entry, int control_port, const std::string& server_ip, const std::string& private_key);
+    std::filesystem::path get_server_config_path(uint32_t id) const;
     void read_id();
     void read_ports();
     int gen_id();
@@ -48,20 +53,21 @@ public:
         spdlog::info("DataServers destroyed. Final save completed.");
     }
     DataServers();
-    bool add_id(const std::string comment_);
+    bool add_id(const std::string comment_, int control_port, const std::string& server_ip);
     bool deleteServerById(uint32_t id);
 	bool updateServerComment(uint32_t id, const std::string& new_comment);
     void save_all();
     bool updateServerTraffic(uint32_t id, uint64_t this_session_traffic);
     void calculate_total_traffic(uint32_t id);
 
-    bool authorize_id(uint32_t id) const;
+    bool authorize_id(uint32_t id, const std::string& certificate_pem = "") const;
     int get_ports_by_id(uint32_t search_id) const;
     std::vector<Server_struct>  get_servers();
 	bool add_ports(int first, int second = 0);
     bool delete_port(int first, int second = 0);
 	std::string get_port_pool() const;
 	uint64_t get_total_traffic_by_id(uint32_t id) const;
+    bool read_server_config_file(uint32_t id, std::string& content) const;
 };
 
 uint32_t get_random(unsigned int min, unsigned int max);

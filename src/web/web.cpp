@@ -49,6 +49,26 @@ void WebAdmin::setup_tls_in_memory() {
 	}
 }
 
+std::string WebAdmin::detect_external_ip() const {
+	httplib::SSLClient client("api.ipify.org", 443);
+	client.set_connection_timeout(3, 0);
+	client.set_read_timeout(3, 0);
+	auto res = client.Get("/?format=json");
+	if (!res || res->status != 200) {
+		spdlog::warn("Failed to detect external IP, fallback to 127.0.0.1");
+		return "127.0.0.1";
+	}
+
+	try {
+		auto body = json::parse(res->body);
+		return body.value("ip", std::string("127.0.0.1"));
+	}
+	catch (...) {
+		spdlog::warn("Invalid response while detecting external IP");
+		return "127.0.0.1";
+	}
+}
+
 void WebAdmin::apply_auth_middleware() {
 
 
@@ -219,10 +239,37 @@ void WebAdmin::start() {
 	svr->Post("/api/server/add", [this](const httplib::Request& req, httplib::Response& res) {
 		try {
 			auto j = json::parse(req.body);
-			bool success = web_data_servers->add_id(j.at("comment").get<std::string>());
+			const auto external_ip = detect_external_ip();
+			const int control_port = web_server_manager->get_control_port();
+			bool success = web_data_servers->add_id(j.at("comment").get<std::string>(), control_port, external_ip);
 			res.set_content(json({ {"status", success ? "ok" : "error"} }).dump(), "application/json");
 		}
 		catch (...) { res.status = 400; }
+		});
+
+	svr->Get("/api/server/config", [this](const httplib::Request& req, httplib::Response& res) {
+		if (!req.has_param("id")) {
+			res.status = 400;
+			res.set_content(json({ {"status", "error"}, {"message", "missing id"} }).dump(), "application/json");
+			return;
+		}
+
+		try {
+			const uint32_t id = static_cast<uint32_t>(std::stoul(req.get_param_value("id")));
+			std::string content;
+			if (!web_data_servers->read_server_config_file(id, content)) {
+				res.status = 404;
+				res.set_content(json({ {"status", "error"}, {"message", "config not found"} }).dump(), "application/json");
+				return;
+			}
+
+			res.set_header("Content-Disposition", "attachment; filename=\"server_" + std::to_string(id) + ".json\"");
+			res.set_content(content, "application/json");
+		}
+		catch (...) {
+			res.status = 400;
+			res.set_content(json({ {"status", "error"}, {"message", "bad id"} }).dump(), "application/json");
+		}
 		});
 
 	// --- API: stop server ---
