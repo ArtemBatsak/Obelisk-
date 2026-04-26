@@ -113,7 +113,7 @@ void GrayServer::check_data_pool() {
         check_in_progress = false;
     }
 
-    data_pool_timer.expires_after(std::chrono::seconds(1));
+    data_pool_timer.expires_after(std::chrono::seconds(2));
     data_pool_timer.async_wait([self](const asio::error_code& ec) {
         if (!self->alive || ec == asio::error::operation_aborted) return;
         self->check_data_pool();
@@ -349,7 +349,7 @@ std::string GrayServer::generate_id(std::shared_ptr<asio::ip::tcp::socket> sock)
 void GrayServer::try_create_pair() {
     std::shared_ptr<asio::ip::tcp::socket> client_sock;
     std::shared_ptr<asio::ip::tcp::socket> data_sock;
-
+	
     {
         std::lock_guard<std::mutex> lock_client(client_pool_mutex);
         std::lock_guard<std::mutex> lock_data(data_pool_mutex);
@@ -389,6 +389,7 @@ void GrayServer::try_create_pair() {
 
     splice_loop(client_sock, data_sock, pair, true);
     splice_loop(data_sock, client_sock, pair, false);
+	check_data_pool();
 }
 
 void GrayServer::splice_loop(
@@ -416,6 +417,7 @@ void GrayServer::splice_loop(
                             spdlog::debug("Pair {}: read error ({}): {}",
                                 pair->pair_id, ec.value(), ec.message());
                         }
+                        *do_read = nullptr;
                         self->remove_pair(pair->pair_id);
                         return;
                     }
@@ -437,11 +439,12 @@ void GrayServer::splice_loop(
                                     spdlog::debug("Pair {}: write error ({}): {}",
                                         pair->pair_id, ec_write.value(), ec_write.message());
                                 }
+                                *do_read = nullptr;
                                 self->remove_pair(pair->pair_id);
                                 return;
                             }
 
-                            (*do_read)(); 
+                            (*do_read)();
                         }
                     );
                 }
