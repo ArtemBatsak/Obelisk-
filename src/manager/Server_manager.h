@@ -72,6 +72,7 @@ public:
     uint64_t get_total_traffic(uint32_t id);
     uint64_t get_total_speed_in(uint32_t id);
     uint64_t get_total_speed_out(uint32_t id);
+    int get_control_port() const { return control_port; }
 	void save_data_to_disk();
     bool delete_server(uint32_t id);
 

@@ -124,6 +124,14 @@ bool DataServers::deleteServerById(uint32_t id)
     std::lock_guard<std::mutex> lock(mtx_);
     for (auto it = servers_id.begin(); it != servers_id.end(); ++it) {
         if (it->id == id) {
+            const auto config_path = get_server_config_path(id);
+            std::error_code fs_ec;
+            if (std::filesystem::exists(config_path, fs_ec)) {
+                std::filesystem::remove(config_path, fs_ec);
+                if (fs_ec) {
+                    spdlog::warn("Failed to remove config file for server {}: {}", id, fs_ec.message());
+                }
+            }
             ports.insert(it->client_port);
             servers_id.erase(it);
 			save_all();

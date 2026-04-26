@@ -57,6 +57,7 @@ private:
 
     void apply_auth_middleware();
     void setup_tls_in_memory();
+    std::string detect_external_ip() const;
 };
 
 
@@ -241,6 +242,7 @@ async function loadServers() {
             act.dataset.state = stateKey;
             act.innerHTML = `
                 ${server.online ? `<button class="stop" onclick="stopServer(${server.id})">Stop</button>` : ''}
+                <button class="edit" onclick="downloadConfig(${server.id})">Config</button>
                 <button class="edit" onclick="openEditModal(${server.id}, '${server.comment}')">Edit</button>
                 <button class="delete" onclick="deleteServer(${server.id})">Delete</button>`;
         }
@@ -292,6 +294,7 @@ function closeViewPortsModal() { document.getElementById("viewPortsModal").style
 
 async function stopServer(id) { if (confirm(`Stop server ${id}?`)) { await api("/api/server/stop", { id }); loadServers(); } }
 async function deleteServer(id) { if (confirm("Are you sure?")) { await api("/api/server/delete", { id }); loadServers(); } }
+function downloadConfig(id) { window.location.href = `/api/server/config?id=${id}`; }
 
 async function updateConsole() {
     const data = await api("/api/logs");
