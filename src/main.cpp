@@ -26,7 +26,9 @@ auto running = std::make_shared<std::atomic<bool>>(true);
 int CONTROL_PORT;
 int DATA_PORT;
 int WEB_PORT;
-
+std::string CONFIG_PATH = "config/config.json";
+std::string TLS_CERT_PATH = "config/tls_cert.cer";
+std::string TLS_KEY_PATH = "config/tls_key.pem";
 
 
 
@@ -55,6 +57,8 @@ int main()
             CONTROL_PORT,
             DATA_PORT,
             data_servers,
+            TLS_CERT_PATH,
+            TLS_KEY_PATH,
             io.get_executor()
         );
 		server_manager->start();

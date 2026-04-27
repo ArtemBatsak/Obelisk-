@@ -43,7 +43,7 @@ std::filesystem::path DataServers::get_server_config_path(uint32_t id) const {
     return configs_dir / ("server_" + std::to_string(id) + ".json");
 }
 
-bool DataServers::write_server_config_file(const Server_struct& entry, int control_port, const std::string& server_ip, const std::string& private_key) {
+bool DataServers::write_server_config_file(const Server_struct& entry, int control_port, const std::string& server_ip, const std::string& private_key, const std::string& trusted_server_certificate) {
     nlohmann::json config_json;
     config_json["CONTROL_PORT"] = control_port;
     config_json["ID_CLIENT"] = entry.id;
@@ -53,6 +53,7 @@ bool DataServers::write_server_config_file(const Server_struct& entry, int contr
     config_json["SERVER_IP"] = server_ip;
     config_json["CERTIFICATE"] = entry.certificate;
     config_json["PRIVATE_KEY"] = private_key;
+    config_json["TRUSTED_SERVER_CERTIFICATE"] = trusted_server_certificate;
 
     try {
         std::ofstream out(get_server_config_path(entry.id), std::ios::trunc);
@@ -197,7 +198,7 @@ void DataServers::calculate_total_traffic(uint32_t id) {
     }
 }
 
-bool DataServers::add_id(const std::string comment_, int control_port, const std::string& server_ip) {
+bool DataServers::add_id(const std::string comment_, int control_port, const std::string& server_ip, const std::string& trusted_server_certificate) {
     std::lock_guard<std::mutex> lock(mtx_);
     int selected_port = -1;
     int new_id;
@@ -206,7 +207,7 @@ bool DataServers::add_id(const std::string comment_, int control_port, const std
         spdlog::error("Error: not enough free ports available for a new server!");
         return false;
     }
-	
+
     auto it = ports.begin();
     while (it != ports.end()) {
         int candidate = *it;
@@ -218,7 +219,7 @@ bool DataServers::add_id(const std::string comment_, int control_port, const std
             break;
         }
     }
-    
+
 
     new_id = gen_id();
     Server_struct entry;
@@ -236,13 +237,13 @@ bool DataServers::add_id(const std::string comment_, int control_port, const std
     }
 
     servers_id.push_back(entry);
-    if (!write_server_config_file(entry, control_port, server_ip, pem.first)) {
+    if (!write_server_config_file(entry, control_port, server_ip, pem.first, trusted_server_certificate)) {
         servers_id.pop_back();
         ports.insert(selected_port);
         return false;
     }
     save_all();
-    
+
     spdlog::info("Server created with ID {}, client_port={}", new_id, selected_port);
 
     return true;

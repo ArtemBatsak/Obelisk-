@@ -38,8 +38,7 @@ private:
     std::filesystem::path configs_dir = "Gray_servers config";
 
     void ensure_file();
-    bool write_server_config_file(const Server_struct& entry, int control_port, const std::string& server_ip, const std::string& private_key);
-    std::filesystem::path get_server_config_path(uint32_t id) const;
+    bool write_server_config_file(const Server_struct& entry, int control_port, const std::string& server_ip, const std::string& private_key, const std::string& trusted_server_certificate); std::filesystem::path get_server_config_path(uint32_t id) const;
     void read_id();
     void read_ports();
     int gen_id();
@@ -53,7 +52,7 @@ public:
         spdlog::info("DataServers destroyed. Final save completed.");
     }
     DataServers();
-    bool add_id(const std::string comment_, int control_port, const std::string& server_ip);
+    bool add_id(const std::string comment_, int control_port, const std::string& server_ip, const std::string& trusted_server_certificate);
     bool deleteServerById(uint32_t id);
 	bool updateServerComment(uint32_t id, const std::string& new_comment);
     void save_all();

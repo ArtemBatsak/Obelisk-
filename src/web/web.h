@@ -35,9 +35,7 @@ public:
 		  web_wizard(std::move(wi)),
           port_(port),
           m_running(false)
-    {
-        setup_tls_in_memory();
-    }
+    {}
 
   ~WebAdmin();
 
@@ -51,8 +49,8 @@ private:
     std::shared_ptr<DataServers> web_data_servers;
     std::shared_ptr<ServerManager> web_server_manager;
 	std::shared_ptr<ConfigManager> web_wizard;
-    std::string mem_cert;
-    std::string mem_key;
+    std::string tls_cert_path;
+    std::string tls_key_path;
     std::unique_ptr<httplib::SSLServer> svr;
 
     void apply_auth_middleware();
