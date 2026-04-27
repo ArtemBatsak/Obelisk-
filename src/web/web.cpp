@@ -30,23 +30,9 @@ WebAdmin::~WebAdmin() {
 
 
 void WebAdmin::setup_tls_in_memory() {
-	auto pem = generate_self_signed_cert_pem();
-	this->mem_key = pem.first;
-	this->mem_cert = pem.second;
-	if (mem_key.empty() || mem_cert.empty()) {
-
-		spdlog::error("WebAdmin: Failed to generate in-memory TLS cert/key!");
-		return;
-	}
-
-	// Check the beginning of the PEM strings to ensure they look correct (for debugging)
-	//spdlog::info("Key start: {}", mem_key.substr(0, 25));
-	//spdlog::info("Cert start: {}", mem_cert.substr(0, 25));
-
-	if (mem_key.find("BEGIN RSA PRIVATE KEY") == std::string::npos &&
-		mem_key.find("BEGIN PRIVATE KEY") == std::string::npos) {
-		spdlog::error("WebAdmin: Generated key PEM does not look correct!");
-	}
+	const auto cfg = web_wizard->get_config();
+	tls_cert_path = cfg.tls_cert_path;
+	tls_key_path = cfg.tls_key_path;
 }
 
 std::string WebAdmin::detect_external_ip() const {
@@ -109,36 +95,15 @@ void WebAdmin::start() {
 	if (m_running) return;
 
 	setup_tls_in_memory();
-	// Somthing went wrong with in-memory cert generation
-	// We can`t start server without certs, so we will try to write them to temp files and load from there
-	// After loading, we can delete these files, because SSLServer should have loaded the certs into memory
-	std::string cert_path = "web_admin.crt";
-	std::string key_path = "web_admin.key";
 
-	try {
-		std::ofstream cert_file(cert_path, std::ios::binary);
-		cert_file << mem_cert;
-		cert_file.close();
-
-		std::ofstream key_file(key_path, std::ios::binary);
-		key_file << mem_key;
-		key_file.close();
-	}
-	catch (const std::exception& e) {
-		spdlog::error("WebAdmin: Failed to write temp SSL files: {}", e.what());
-		return;
-	}
-
-	svr = std::make_unique<httplib::SSLServer>(cert_path.c_str(), key_path.c_str());
+	svr = std::make_unique<httplib::SSLServer>(tls_cert_path.c_str(), tls_key_path.c_str());
 
 	if (!svr->is_valid()) {
-		spdlog::error("WebAdmin: SSL Server is NOT valid even from temporary files!");
-		std::filesystem::remove(cert_path);
-		std::filesystem::remove(key_path);
+		spdlog::error("WebAdmin: SSL Server is NOT valid (cert: {}, key: {})", tls_cert_path, tls_key_path);
 		return;
 	}
 
-	spdlog::info("WebAdmin: SSL Server initialized successfully with in-memory certs!");
+	spdlog::info("WebAdmin: SSL Server initialized successfully from certificate files.");
 	apply_auth_middleware();
 
 	// ---Statick---
@@ -241,7 +206,8 @@ void WebAdmin::start() {
 			auto j = json::parse(req.body);
 			const auto external_ip = detect_external_ip();
 			const int control_port = web_server_manager->get_control_port();
-			bool success = web_data_servers->add_id(j.at("comment").get<std::string>(), control_port, external_ip);
+			const auto trusted_server_certificate = web_server_manager->get_tls_certificate_pem();
+			bool success = web_data_servers->add_id(j.at("comment").get<std::string>(), control_port, external_ip, trusted_server_certificate);
 			res.set_content(json({ {"status", success ? "ok" : "error"} }).dump(), "application/json");
 		}
 		catch (...) { res.status = 400; }

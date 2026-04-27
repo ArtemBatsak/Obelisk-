@@ -9,6 +9,7 @@
 #include <chrono>
 #include <asio.hpp>
 #include <asio/ssl.hpp>
+#include <string>
 #include "tls/Tls_session.h"
 
 using asio::ip::tcp;
@@ -28,11 +29,15 @@ public:
         int CONTROL_PORT_,
         int DATA_PORT_,
         std::shared_ptr<DataServers> data_servers_,
+        std::string tls_cert_path_,
+        std::string tls_key_path_,
         asio::any_io_executor io) :
 		running(running_),
         control_port(CONTROL_PORT_),
         data_port(DATA_PORT_),
 		data_servers(data_servers_),
+        tls_cert_path(std::move(tls_cert_path_)),
+        tls_key_path(std::move(tls_key_path_)),
         io_context_(io),
         ssl_ctx(asio::ssl::context::tls_server)
     {
@@ -73,6 +78,7 @@ public:
     uint64_t get_total_speed_in(uint32_t id);
     uint64_t get_total_speed_out(uint32_t id);
     int get_control_port() const { return control_port; }
+    std::string get_tls_certificate_pem() const;
 	void save_data_to_disk();
     bool delete_server(uint32_t id);
 
@@ -81,6 +87,9 @@ private:
     asio::any_io_executor io_context_;
     const int control_port;
 	const int data_port;
+    std::string tls_cert_path;
+    std::string tls_key_path;
+    std::string tls_certificate_pem;
     asio::ssl::context ssl_ctx;
     std::weak_ptr<DataServers> data_servers;
     std::mutex mtx_;
@@ -93,7 +102,6 @@ private:
     std::chrono::seconds traffic_sync_interval{ 1 };
 	std::chrono::seconds save_data_interval{ 600 }; // Every 10 minutes we will save data to disk
 };
-
 
 
 

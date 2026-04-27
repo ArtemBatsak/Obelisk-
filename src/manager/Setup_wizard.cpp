@@ -1,4 +1,6 @@
 #include "Setup_wizard.h"
+#include "tls/tls_session.h"
+#include <filesystem>
 
 bool ConfigManager::check_config() {
     std::ifstream file("config.json");
@@ -9,6 +11,9 @@ bool ConfigManager::check_config() {
 
     try {
         load();
+        if (!ensure_tls_material()) {
+            return false;
+        }
         return true;
     } catch (const std::exception& e) {
         spdlog::error("Failed to parse config.json: {}", e.what());
@@ -71,6 +76,12 @@ void ConfigManager::set_up() {
     HashResult hash_result = get_safe_hash(pass_input);
     config_.admin_password_hash = hash_result.hash;
     config_.admin_password_salt = hash_result.salt;
+    config_.tls_cert_path = "obelisk_server.crt";
+    config_.tls_key_path = "obelisk_server.key";
+    if (!ensure_tls_material()) {
+        spdlog::error("Failed to create TLS certificate/key files.");
+        return;
+    }
 
     spdlog::info("");
     spdlog::info("Setup complete. Saving config...");
@@ -96,6 +107,8 @@ void ConfigManager::load() {
     config_.admin_password_hash = j.at("admin_password_hash").get<std::string>();
     config_.admin_username = j.at("admin_username").get<std::string>();
 	config_.admin_password_salt = j.at("admin_password_salt").get<std::string>();
+    config_.tls_cert_path = j.value("tls_cert_path", std::string("obelisk_server.crt"));
+    config_.tls_key_path = j.value("tls_key_path", std::string("obelisk_server.key"));
 }
 
 bool ConfigManager::save() {
@@ -106,6 +119,8 @@ bool ConfigManager::save() {
     j["admin_password_hash"] = config_.admin_password_hash;
     j["admin_username"] = config_.admin_username;
 	j["admin_password_salt"] = config_.admin_password_salt;
+    j["tls_cert_path"] = config_.tls_cert_path;
+    j["tls_key_path"] = config_.tls_key_path;
     try {
         std::ofstream file("config.json");
         file << j.dump(4);
@@ -115,6 +130,26 @@ bool ConfigManager::save() {
         spdlog::error("Failed to save config: {}", e.what());
         return false;
     }
+}
+
+bool ConfigManager::ensure_tls_material() {
+    if (config_.tls_cert_path.empty()) {
+        config_.tls_cert_path = "obelisk_server.crt";
+    }
+    if (config_.tls_key_path.empty()) {
+        config_.tls_key_path = "obelisk_server.key";
+    }
+
+    if (std::filesystem::exists(config_.tls_cert_path) && std::filesystem::exists(config_.tls_key_path)) {
+        return true;
+    }
+
+    if (!generate_self_signed_cert_files(config_.tls_cert_path, config_.tls_key_path)) {
+        spdlog::error("Failed to generate TLS files {}, {}", config_.tls_cert_path, config_.tls_key_path);
+        return false;
+    }
+
+    return save();
 }
 
 bool ConfigManager::is_port_available(int port) {

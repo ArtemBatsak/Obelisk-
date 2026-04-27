@@ -1,5 +1,7 @@
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
+#include <fstream>
+#include <sstream>
 #include "Server_manager.h"
 //=============ServerManager implementation=============
 void ServerManager::add(std::shared_ptr<GrayServer> server) {
@@ -201,10 +203,12 @@ void ServerManager::start_up_tls() {
         | asio::ssl::context::single_dh_use
     );
 
-    auto pem = generate_self_signed_cert_pem();
-    if (!load_cert_and_key_into_context(self->ssl_ctx, pem.second, pem.first))
-    {
-        spdlog::error("Failed to load certificate into SSL context");
+    try {
+        self->ssl_ctx.use_certificate_chain_file(tls_cert_path);
+        self->ssl_ctx.use_private_key_file(tls_key_path, asio::ssl::context::pem);
+    }
+    catch (const std::exception& e) {
+        spdlog::error("Failed to load certificate/key into SSL context: {}", e.what());
         return;
     }
 
@@ -213,9 +217,21 @@ void ServerManager::start_up_tls() {
         return true;
         });
 
-    spdlog::info("Self-signed certificate generated (in memory)");
+    std::ifstream cert_file(tls_cert_path, std::ios::binary);
+    std::stringstream cert_buf;
+    cert_buf << cert_file.rdbuf();
+    tls_certificate_pem = cert_buf.str();
+    if (tls_certificate_pem.empty()) {
+        spdlog::warn("TLS certificate file is empty: {}", tls_cert_path);
+    }
+
+    spdlog::info("TLS certificate loaded from disk: {}", tls_cert_path);
 
   
+}
+
+std::string ServerManager::get_tls_certificate_pem() const {
+    return tls_certificate_pem;
 }
 
 void ServerManager::init_acceptor() {

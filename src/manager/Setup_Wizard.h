@@ -27,7 +27,9 @@ struct Config {
     int web_port;
     std::string admin_password_hash;
     std::string admin_username;
-	std::string admin_password_salt; 
+	std::string admin_password_salt;
+    std::string tls_cert_path;
+    std::string tls_key_path;
 };
 
 class ConfigManager : public std::enable_shared_from_this<ConfigManager> {
@@ -39,6 +41,7 @@ public:
 private:
 	Config config_;
     bool save();
+    bool ensure_tls_material();
     HashResult get_safe_hash(const std::string& password);
     bool is_port_available(int port);
     void load();

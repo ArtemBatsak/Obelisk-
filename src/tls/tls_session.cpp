@@ -1,4 +1,6 @@
 ﻿#include "tls/Tls_session.h"
+#include <fstream>
+#include <filesystem>
 
 // Generate a self-signed certificate and private key in PEM format using OpenSSL
 std::pair<std::string, std::string> generate_self_signed_cert_pem()
@@ -99,4 +101,44 @@ bool load_cert_and_key_into_context(asio::ssl::context& ctx,
     EVP_PKEY_free(pkey);
 
     return ok;
+}
+
+bool generate_self_signed_cert_files(const std::string& cert_path, const std::string& key_path)
+{
+    auto pem = generate_self_signed_cert_pem();
+    const std::string& key_pem = pem.first;
+    const std::string& cert_pem = pem.second;
+
+    if (key_pem.empty() || cert_pem.empty()) {
+        return false;
+    }
+
+    try {
+        std::ofstream cert_file(cert_path, std::ios::binary | std::ios::trunc);
+        cert_file << cert_pem;
+        cert_file.close();
+        if (!cert_file.good()) {
+            return false;
+        }
+
+        std::ofstream key_file(key_path, std::ios::binary | std::ios::trunc);
+        key_file << key_pem;
+        key_file.close();
+        if (!key_file.good()) {
+            return false;
+        }
+
+#ifndef _WIN32
+        std::filesystem::permissions(
+            key_path,
+            std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+            std::filesystem::perm_options::replace
+        );
+#endif
+    }
+    catch (...) {
+        return false;
+    }
+
+    return true;
 }
