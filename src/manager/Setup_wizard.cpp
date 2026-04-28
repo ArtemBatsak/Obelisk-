@@ -3,8 +3,6 @@
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
-
-// OpenSSL для TLS валидации
 #include <openssl/x509.h>
 #include <openssl/pem.h>
 #include <openssl/evp.h>
@@ -66,8 +64,8 @@ bool ConfigManager::check_config() {
             spdlog::error("Invalid web_port in config.json {}", config_.web_port);
 			return false;
         }
-        if (config_.admin_username.empty()||config_.admin_username.size()<6) {
-            spdlog::error("admin_username cannot be empty and must be at least 6 characters in config.json");
+        if (config_.admin_username.empty()) {
+            spdlog::error("admin_username cannot be empty in config.json");
             return false;
 		}
         if (config_.admin_password_hash.empty() || config_.admin_password_salt.empty()) {
