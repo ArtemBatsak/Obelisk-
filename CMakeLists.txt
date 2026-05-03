@@ -53,14 +53,14 @@ enable_testing()
 
 
 add_executable(Obelisk_tests
-    tests/test_main.cpp
-    src/logger/Logger.cpp
-    src/manager/Data.cpp
-    src/manager/Server_manager.cpp
-    src/manager/Setup_wizard.cpp
-    src/server/Server_class.cpp
-    src/tls/Tls_session.cpp
-    src/web/Web.cpp
+    ${CMAKE_SOURCE_DIR}/tests/test_main.cpp
+    ${CMAKE_SOURCE_DIR}/src/logger/Logger.cpp
+    ${CMAKE_SOURCE_DIR}/src/manager/Data.cpp
+    ${CMAKE_SOURCE_DIR}/src/manager/Server_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/manager/Setup_wizard.cpp
+    ${CMAKE_SOURCE_DIR}/src/server/Server_class.cpp
+    ${CMAKE_SOURCE_DIR}/src/tls/Tls_session.cpp
+    ${CMAKE_SOURCE_DIR}/src/web/Web.cpp
 )
 
 if (WIN32)
