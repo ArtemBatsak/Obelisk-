@@ -85,7 +85,7 @@ Example:
 
 ### Traffic diagram
 
-`docs/Architecture.png`
+![Architecture](docs/Architecture.png)
 
 ---
 
