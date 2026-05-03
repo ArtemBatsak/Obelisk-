@@ -1,4 +1,4 @@
-﻿#pragma once
+﻿﻿#pragma once
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <httplib.h>
 
@@ -19,36 +19,37 @@ struct ProxyServerInfo {
     int id;
     int client_port;
     std::string comment;
-    int last_seen; 
+    int last_seen;
     int active_pairs;
     bool online;
 };
 
-class WebAdmin{
+class WebAdmin {
 public:
     WebAdmin(std::shared_ptr<DataServers> ds,
-             std::shared_ptr<ServerManager> sm,
-		     std::shared_ptr<ConfigManager> wi,
-             int port)
+        std::shared_ptr<ServerManager> sm,
+        std::shared_ptr<ConfigManager> wi,
+        int port)
         : web_data_servers(std::move(ds)),
-          web_server_manager(std::move(sm)),
-		  web_wizard(std::move(wi)),
-          port_(port),
-          m_running(false)
-    {}
+        web_server_manager(std::move(sm)),
+        web_wizard(std::move(wi)),
+        port_(port),
+        m_running(false)
+    {
+    }
 
-  ~WebAdmin();
+    ~WebAdmin();
 
-  void start();
-  void stop();
+    void start();
+    void stop();
 
 private:
-    
+
     bool m_running;
     int port_;
     std::shared_ptr<DataServers> web_data_servers;
     std::shared_ptr<ServerManager> web_server_manager;
-	std::shared_ptr<ConfigManager> web_wizard;
+    std::shared_ptr<ConfigManager> web_wizard;
     std::string tls_cert_path;
     std::string tls_key_path;
     std::unique_ptr<httplib::SSLServer> svr;
