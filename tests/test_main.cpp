@@ -2,6 +2,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -254,7 +255,8 @@ namespace {
         const uint16_t web_port = reserve_free_port(io);
 
         {
-            std::ofstream cfg("config.json");
+            fs::create_directories("config");
+            std::ofstream cfg(CONFIG_PATH);
             cfg << "{\n"
                 << "  \"control_port\": " << control_port << ",\n"
                 << "  \"data_port\": " << data_port << ",\n"
@@ -297,6 +299,14 @@ namespace {
         ASSERT_NE(pid, -1);
 
         if (pid == 0) {
+            int input_pipe[2];
+            if (pipe(input_pipe) == 0) {
+                const char* scripted_input = "\n\n\n\nstrongpass\n";
+                (void)write(input_pipe[1], scripted_input, std::strlen(scripted_input));
+                close(input_pipe[1]);
+                dup2(input_pipe[0], STDIN_FILENO);
+                close(input_pipe[0]);
+            }
             execl(obelisk_binary.c_str(), obelisk_binary.c_str(), (char*)nullptr);
             _exit(127);
         }
@@ -488,7 +498,7 @@ namespace {
             io.get_executor()
         );
 
-        EXPECT_NO_THROW(server_manager->start());
+        EXPECT_THROW(server_manager->start(), std::system_error);
     }
 
     /// ====== Test 5: Multiple clients connect simultaneously ======
@@ -565,7 +575,8 @@ namespace {
 
 
         {
-            std::ofstream cfg("config.json");
+            fs::create_directories("config");
+            std::ofstream cfg(CONFIG_PATH);
             cfg << "{ invalid json }";
         }
 
