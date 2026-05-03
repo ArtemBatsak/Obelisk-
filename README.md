@@ -104,7 +104,8 @@ Even with HTTPS and authentication, it is strongly recommended to:
 - **not expose web port to the public Internet**;
 - allow access only from local network, private subnet, or through VPN;
 - apply firewall allowlist rules for admin access.
-
+![Web](docs/Web.jpg)
+![Web](docs/Manager.jpg)
 ---
 
 ## 5) Build and platform
