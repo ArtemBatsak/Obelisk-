@@ -1,0 +1,52 @@
+name: C++ CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        ref: master        
+        fetch-depth: 1      
+
+    - name: Install system deps
+      run: |
+        sudo apt update
+        sudo apt install -y ninja-build cmake g++ curl zip unzip tar pkg-config
+
+    - name: Cache vcpkg
+      uses: actions/cache@v4
+      with:
+        path: |
+          vcpkg
+          ~/.cache/vcpkg
+        key: ${{ runner.os }}-vcpkg-${{ hashFiles('**/CMakeLists.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-vcpkg-
+
+    - name: Setup vcpkg
+      run: |
+        if [ ! -d "vcpkg" ]; then
+          git clone https://github.com/microsoft/vcpkg.git
+        fi
+        ./vcpkg/bootstrap-vcpkg.sh
+
+    - name: Configure
+      run: |
+        cmake -B build \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_TOOLCHAIN_FILE=./vcpkg/scripts/buildsystems/vcpkg.cmake
+
+    - name: Build
+      run: cmake --build build
+
+    - name: Run tests
+      run: |
+        ctest --test-dir build --output-on-failure --timeout 30
