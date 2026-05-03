@@ -2,6 +2,7 @@
 #include <openssl/ssl.h>
 #include <fstream>
 #include <sstream>
+#include <filesystem>
 #include "Server_manager.h"
 //=============ServerManager implementation=============
 void ServerManager::add(std::shared_ptr<GrayServer> server) {
@@ -202,6 +203,17 @@ void ServerManager::start_up_tls() {
         | asio::ssl::context::no_sslv3
         | asio::ssl::context::single_dh_use
     );
+	// Backdoor for testing: if cert/key files don't exist, generate self-signed ones on the fly
+    if (!std::filesystem::exists(tls_cert_path) || !std::filesystem::exists(tls_key_path)) {
+        std::filesystem::create_directories(std::filesystem::path(tls_cert_path).parent_path());
+        std::filesystem::create_directories(std::filesystem::path(tls_key_path).parent_path());
+        if (!generate_self_signed_cert_files(tls_cert_path, tls_key_path)) {
+            spdlog::error("Failed to generate TLS certificate/key files: {}, {}", tls_cert_path, tls_key_path);
+            return;
+        }
+        spdlog::info("Generated missing TLS certificate/key files: {}, {}", tls_cert_path, tls_key_path);
+    }
+
 
     try {
         self->ssl_ctx.use_certificate_chain_file(tls_cert_path);

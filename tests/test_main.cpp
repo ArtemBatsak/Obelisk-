@@ -24,12 +24,14 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
-
 #include "logger/Logger.h"
 #include "manager/Data.h"
 #include "manager/Server_manager.h"
-#include "manager/Setup_Wizard.h"
+#include "manager/Setup_wizard.h"
 #include "tls/Tls_session.h"
+std::string CONFIG_PATH = "config/config.json";
+std::string TLS_CERT_PATH = "config/tls_cert.cer";
+std::string TLS_KEY_PATH = "config/tls_key.pem";
 
 namespace fs = std::filesystem;
 using asio::ip::tcp;
@@ -78,7 +80,7 @@ namespace {
         explicit TestGrayConnector(asio::io_context& io, const std::string& cert_pem = {}, const std::string& key_pem = {})
             : io_(io),
             ssl_ctx_(asio::ssl::context::tlsv12_client),
-            ssl_sock_(nullptr) {  
+            ssl_sock_(nullptr) {
             ssl_ctx_.set_verify_mode(asio::ssl::verify_none);
             ssl_ctx_.set_options(
                 asio::ssl::context::default_workarounds |
@@ -93,11 +95,12 @@ namespace {
                     throw std::runtime_error("Failed to load test client certificate into SSL context");
                 }
                 std::cout << "[TestGrayConnector] Certificate loaded successfully!" << std::endl;
-            } else {
-                std::cout << "[TestGrayConnector] WARNING: cert_pem.empty()=" << cert_pem.empty() 
-                          << ", key_pem.empty()=" << key_pem.empty() << std::endl;
             }
-                
+            else {
+                std::cout << "[TestGrayConnector] WARNING: cert_pem.empty()=" << cert_pem.empty()
+                    << ", key_pem.empty()=" << key_pem.empty() << std::endl;
+            }
+
             ssl_sock_ = std::make_shared<asio::ssl::stream<tcp::socket>>(io_, ssl_ctx_);
             std::cout << "[TestGrayConnector] SSL socket created successfully!" << std::endl;
         }
@@ -106,17 +109,18 @@ namespace {
             tcp::resolver resolver(io_);
             auto endpoints = resolver.resolve(server_ip, std::to_string(control_port));
             asio::connect(ssl_sock_->lowest_layer(), endpoints);
-            
+
             std::cout << "[CLIENT] Connected to " << server_ip << ":" << control_port << std::endl;
             std::cout << "[CLIENT] About to perform SSL handshake..." << std::endl;
-            
+
             try {
                 ssl_sock_->handshake(asio::ssl::stream_base::client);
                 std::cout << "[CLIENT] Handshake successful!" << std::endl;
-            } catch (const std::exception& e) {
+            }
+            catch (const std::exception& e) {
                 std::cout << "[CLIENT] Handshake failed: " << e.what() << std::endl;
                 throw;
-            }  
+            }
 
             std::array<uint32_t, 2> req_buf{};
             req_buf[0] = htonl(id_client);
@@ -213,7 +217,7 @@ namespace {
         std::condition_variable cv_;
         std::vector<std::shared_ptr<tcp::socket>> data_sockets_;
     };
-	/// ====== Test 1: ConfigManager setup wizard creates and loads config file ======
+    /// ====== Test 1: ConfigManager setup wizard creates and loads config file ======
     TEST(ConfigManagerTest, SetupWizardCreatesAndLoadsConfigFile) {
         ScopedTempDir temp;
         SCOPED_TRACE("Class under test: ConfigManager");
@@ -226,7 +230,7 @@ namespace {
         wizard->set_up();
         std::cin.rdbuf(old_in);
 
-        EXPECT_TRUE(fs::exists("config.json"));
+        EXPECT_TRUE(fs::exists(CONFIG_PATH));
 
         auto loaded = std::make_shared<ConfigManager>();
         EXPECT_TRUE(loaded->check_config());
@@ -239,7 +243,7 @@ namespace {
         EXPECT_FALSE(cfg.admin_password_hash.empty());
         EXPECT_FALSE(cfg.admin_password_salt.empty());
     }
-	/// ====== Test 2: Main process starts with prepared config and stops on signal ======
+    /// ====== Test 2: Main process starts with prepared config and stops on signal ======
     TEST(ObeliskMainProcessTest, MainStartsWithPreparedConfigAndStopsOnSignal) {
         ScopedTempDir temp;
         SCOPED_TRACE("Class under test: main (application startup flow)");
@@ -308,7 +312,7 @@ namespace {
         EXPECT_TRUE(WIFEXITED(status));
 #endif
     }
-	/// ====== Test 3: Full integration flow - create server, connect, transfer data, close connection, delete server ======
+    /// ====== Test 3: Full integration flow - create server, connect, transfer data, close connection, delete server ======
     TEST(ServerManagerIntegrationFlowTest, FullDataPathCreateConnectTransferCloseDelete) {
         ScopedTempDir temp;
 
@@ -336,6 +340,8 @@ namespace {
             control_port,
             data_port,
             data_servers,
+            TLS_CERT_PATH,
+            TLS_KEY_PATH,
             io.get_executor()
         );
 
@@ -460,7 +466,7 @@ namespace {
         std::cout << "[load_cert] Result: " << (ok ? "SUCCESS" : "FAILED") << std::endl;
         return ok;
     }
-	/// ====== Test 4: ServerManager handles port already in use gracefully ======
+    /// ====== Test 4: ServerManager handles port already in use gracefully ======
     TEST(ServerManagerTest, HandlePortAlreadyInUse) {
         ScopedTempDir temp;
         init_logging();
@@ -473,13 +479,19 @@ namespace {
         auto running = std::make_shared<std::atomic<bool>>(true);
 
         auto server_manager = std::make_shared<ServerManager>(
-            running, busy_port, 12345, data_servers, io.get_executor()
+            running,
+            busy_port,
+            12345,
+            data_servers,
+            TLS_CERT_PATH,
+            TLS_KEY_PATH,
+            io.get_executor()
         );
 
         EXPECT_NO_THROW(server_manager->start());
     }
 
-	/// ====== Test 5: Multiple clients connect simultaneously ======
+    /// ====== Test 5: Multiple clients connect simultaneously ======
     TEST(ServerManagerIntegrationFlowTest, MultipleClientsConnectSimultaneously) {
         ScopedTempDir temp;
         init_logging();
@@ -496,7 +508,13 @@ namespace {
         }
 
         auto server_manager = std::make_shared<ServerManager>(
-            running, control_port, data_port, data_servers, io.get_executor()
+            running,
+            control_port,
+            data_port,
+            data_servers,
+            TLS_CERT_PATH,
+            TLS_KEY_PATH,
+            io.get_executor()
         );
 
         server_manager->start();
@@ -544,16 +562,16 @@ namespace {
     // ======= Test 6: Handles Corrupted Config File ======
     TEST(ConfigManagerTest, HandlesCorruptedConfigFile) {
         ScopedTempDir temp;
-        
+
 
         {
             std::ofstream cfg("config.json");
             cfg << "{ invalid json }";
         }
-        
+
         auto config_mgr = std::make_shared<ConfigManager>();
-        
-        
+
+
         EXPECT_FALSE(config_mgr->check_config());
     }
 } // namespace

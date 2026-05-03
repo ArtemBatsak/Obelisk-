@@ -52,7 +52,7 @@ public:
         spdlog::info("DataServers destroyed. Final save completed.");
     }
     DataServers();
-    bool add_id(const std::string comment_, int control_port, const std::string& server_ip, const std::string& trusted_server_certificate);
+    bool add_id(const std::string comment_, int control_port, const std::string& server_ip, const std::string& trusted_server_certificate ="");
     bool deleteServerById(uint32_t id);
 	bool updateServerComment(uint32_t id, const std::string& new_comment);
     void save_all();

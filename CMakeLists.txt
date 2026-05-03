@@ -51,6 +51,7 @@ endif()
 # ------------------ Tests ------------------
 enable_testing()
 
+
 add_executable(Obelisk_tests
     tests/test_main.cpp
     src/logger/Logger.cpp
@@ -61,6 +62,13 @@ add_executable(Obelisk_tests
     src/tls/Tls_session.cpp
     src/web/Web.cpp
 )
+
+if (WIN32)
+    target_compile_definitions(Obelisk_tests PRIVATE
+        _WIN32_WINNT=0x0A00
+        WINVER=0x0A00
+    )
+endif()
 
 target_include_directories(Obelisk_tests PRIVATE ${SRC_DIR})
 
