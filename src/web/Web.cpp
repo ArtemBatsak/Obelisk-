@@ -1,4 +1,5 @@
 ﻿#include "Web.h"
+#include "path/Path.h"
 
 
 using json = nlohmann::json;
@@ -154,7 +155,7 @@ void WebAdmin::start() {
 
 	// --- API: Logs ---
 	svr->Get("/api/logs", [](const httplib::Request&, httplib::Response& res) {
-		std::string log_path = "logs/obelisk.log";
+		std::string log_path = Path::LogFile();
 		std::string content = "";
 
 		if (std::filesystem::exists(log_path)) {

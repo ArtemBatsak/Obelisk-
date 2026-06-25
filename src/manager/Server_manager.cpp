@@ -402,7 +402,7 @@ asio::awaitable<void> ServerManager::async_authorize(std::shared_ptr<asio::ssl::
         //  Check authorization
         if (auto shared_data = data_servers.lock())
         {
-            if (shared_data->authorize_id(id, peer_cert_pem)) {
+            if (shared_data->authorize_id(id, peer_cert_pem) && !server_online(id)) {
 
                 auto p = shared_data->get_ports_by_id(id);
                 auto server = std::make_shared<GrayServer>(

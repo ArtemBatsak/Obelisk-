@@ -4,12 +4,13 @@
 #include <atomic>
 #include <memory>
 #include <array>
+#include <filesystem>
 #include <coroutine>
 #define ASIO_HAS_CO_AWAIT
 #define ASIO_HAS_STD_COROUTINE 
 #include <asio.hpp>
 #ifdef _WIN32
-#include <winsock2.h> // htonl/ntohl
+#include <winsock2.h> 
 #else
 #include <arpa/inet.h>
 #include <csignal>
@@ -20,24 +21,36 @@
 #include "logger/Logger.h"
 #include "web/Web.h"
 #include "manager/Setup_wizard.h"
+#include "path/Path.h"
+
+#ifndef OBELISK_VERSION
+#define OBELISK_VERSION "dev"
+#endif
+
+#ifndef GIT_HASH
+#define GIT_HASH "unknown"
+#endif
 
 auto running = std::make_shared<std::atomic<bool>>(true);
 
 int CONTROL_PORT;
 int DATA_PORT;
 int WEB_PORT;
-std::string CONFIG_PATH = "config/config.json";
-std::string TLS_CERT_PATH = "config/tls_cert.cer";
-std::string TLS_KEY_PATH = "config/tls_key.pem";
 
-
+std::string CONFIG_PATH = Path::ConfigFile();
+std::string TLS_CERT_PATH = Path::CertFile();
+std::string TLS_KEY_PATH = Path::KeyFile();
 
 int main()
 {
+    Path::EnsureDirs();
+    Path::EnsureDataFiles();
+    Path::EnsureLogFiles();
     try
     {
         init_logging();
-        spdlog::info("Obelisk started");
+        spdlog::info("Obelisk {} ({})", OBELISK_VERSION, GIT_HASH);
+        spdlog::info("Log path: {}", Path::LogFile());
 		// --- Configuration ---
 		auto wizard = std::make_shared<ConfigManager>();
 		if (!wizard->check_config())

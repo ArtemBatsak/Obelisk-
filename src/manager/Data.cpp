@@ -28,19 +28,17 @@ Server_struct Server_struct::from_string(const std::string& line) {
 // ---------------- DataServers ----------------
 DataServers::DataServers() {
     std::srand(static_cast<unsigned int>(std::time(nullptr)));
-    ensure_file();
     read_id();
     read_ports();
 }
 
 void DataServers::ensure_file() {
-    std::ofstream(id_file, std::ios::app).close();
-    std::ofstream(port_file, std::ios::app).close();
-    std::filesystem::create_directories(configs_dir);
+    Path::EnsureDataFiles();
+    std::filesystem::create_directories(Path::DataConfigsDirPath());
 }
 
 std::filesystem::path DataServers::get_server_config_path(uint32_t id) const {
-    return configs_dir / ("server_" + std::to_string(id) + ".json");
+    return Path::DataConfigsDirPath() / ("server_" + std::to_string(id) + ".json");
 }
 
 bool DataServers::write_server_config_file(const Server_struct& entry, int control_port, const std::string& server_ip, const std::string& private_key, const std::string& trusted_server_certificate) {
@@ -70,7 +68,7 @@ bool DataServers::write_server_config_file(const Server_struct& entry, int contr
 void DataServers::read_id() {
     std::lock_guard<std::mutex> lock(mtx_);
     servers_id.clear();
-    std::ifstream infile(id_file);
+    std::ifstream infile(Path::DataServersFilePath().string());
     if (!infile.is_open()) return;
 
     std::string line;
@@ -89,7 +87,7 @@ void DataServers::read_id() {
 void DataServers::read_ports() {
     std::lock_guard<std::mutex> lock(mtx_);
 
-    std::ifstream infile(port_file);
+    std::ifstream infile(Path::DataPortsFilePath().string());
     if (!infile) {
         return;
     }
@@ -250,9 +248,9 @@ bool DataServers::add_id(const std::string comment_, int control_port, const std
 }
 
 void DataServers::save_all() {
-    std::ofstream outfile_id(id_file, std::ios::trunc);
+    std::ofstream outfile_id(Path::DataServersFilePath().string(), std::ios::trunc);
     if (!outfile_id.is_open()) {
-        spdlog::error("Error: cannot open {} for writing!", id_file);
+        spdlog::error("Error: cannot open {} for writing!", Path::DataServersFilePath().string());
     }
     else {
         for (const auto& entry : servers_id) {
@@ -261,9 +259,9 @@ void DataServers::save_all() {
     }
 
 
-    std::ofstream outfile_port(port_file, std::ios::trunc);
+    std::ofstream outfile_port(Path::DataPortsFilePath().string(), std::ios::trunc);
     if (!outfile_port.is_open()) {
-        spdlog::error("Error: cannot open {} for writing!", port_file);
+        spdlog::error("Error: cannot open {} for writing!", Path::DataPortsFilePath().string());
     }
     else {
         for (int port : ports) {

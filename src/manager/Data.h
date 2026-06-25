@@ -15,6 +15,8 @@
 #include <openssl/rand.h>
 #include <stdexcept>
 #include <filesystem>
+#include "path/Path.h"
+
 // Data structure for server information + functions to convert to/from string for file storage
 struct Server_struct {
     uint32_t id=0;
@@ -32,11 +34,7 @@ class DataServers {
 private:
     mutable std::mutex mtx_;
     std::vector<Server_struct> servers_id;
-    std::string id_file = "Servers.txt";
     std::set<int> ports;
-    std::string port_file = "Port.txt";
-    std::filesystem::path configs_dir = "Gray_servers config";
-
     void ensure_file();
     bool write_server_config_file(const Server_struct& entry, int control_port, const std::string& server_ip, const std::string& private_key, const std::string& trusted_server_certificate); std::filesystem::path get_server_config_path(uint32_t id) const;
     void read_id();

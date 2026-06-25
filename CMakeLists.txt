@@ -1,5 +1,19 @@
 ﻿cmake_minimum_required(VERSION 3.16)
-project(Obelisk LANGUAGES CXX)
+project(Obelisk VERSION 1.0.0)
+
+# ------------------ Versioning ------------------
+
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+if (NOT GIT_HASH)
+    set(GIT_HASH "unknown")
+endif()
+
 
 # ------------------ C++ standard ------------------
 set(CMAKE_CXX_STANDARD 20)
@@ -11,6 +25,13 @@ set(SRC_DIR ${CMAKE_SOURCE_DIR}/src)
 file(GLOB_RECURSE SOURCES ${SRC_DIR}/*.cpp ${SRC_DIR}/*.h)
 
 add_executable(${PROJECT_NAME} ${SOURCES})
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    CPPHTTPLIB_OPENSSL_SUPPORT
+    OBELISK_VERSION="${PROJECT_VERSION}"
+    GIT_HASH="${GIT_HASH}"
+)
+
 target_include_directories(${PROJECT_NAME} PRIVATE ${SRC_DIR})
 
 
@@ -22,7 +43,7 @@ find_package(httplib CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(GTest CONFIG REQUIRED)
 
-target_compile_definitions(${PROJECT_NAME} PRIVATE 
+target_compile_definitions(${PROJECT_NAME} PRIVATE # one more time for the preprocessor
     CPPHTTPLIB_OPENSSL_SUPPORT
 )
 
@@ -55,6 +76,7 @@ enable_testing()
 add_executable(Obelisk_tests
     ${CMAKE_SOURCE_DIR}/tests/test_main.cpp
     ${CMAKE_SOURCE_DIR}/src/logger/Logger.cpp
+    ${CMAKE_SOURCE_DIR}/src/path/Path.cpp
     ${CMAKE_SOURCE_DIR}/src/manager/Data.cpp
     ${CMAKE_SOURCE_DIR}/src/manager/Server_manager.cpp
     ${CMAKE_SOURCE_DIR}/src/manager/Setup_wizard.cpp

@@ -102,7 +102,3 @@ private:
     std::chrono::seconds traffic_sync_interval{ 1 };
 	std::chrono::seconds save_data_interval{ 600 }; // Every 10 minutes we will save data to disk
 };
-
-
-
-// TSet 

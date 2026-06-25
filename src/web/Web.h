@@ -16,7 +16,6 @@
 #include "tls/Tls_session.h"
 #include "manager/Setup_wizard.h"
 
-
 struct ProxyServerInfo {
     int id;
     int client_port;

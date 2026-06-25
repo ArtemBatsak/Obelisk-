@@ -1,4 +1,5 @@
 ﻿#include "Logger.h"
+#include "path/Path.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/basic_file_sink.h>
@@ -7,22 +8,16 @@
 void init_logging()
 {
 	//protect against multiple initializations
-    if (spdlog::get("obelisk"))
-        return;
+	if (spdlog::get("obelisk"))
+		return;
 
-    namespace fs = std::filesystem;
+	constexpr std::size_t max_file_size = 5 * 1024 * 1024;
+	constexpr std::size_t max_files = 5;
 
-    const fs::path log_dir = "logs";
-    fs::create_directories(log_dir);
-    const fs::path log_file = log_dir / "obelisk.log";
 
-    constexpr std::size_t max_file_size = 5 * 1024 * 1024;
-    constexpr std::size_t max_files = 5;
-
-    
-    auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-        log_file.string(), max_file_size, max_files
-    );
+	auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+		Path::LogFile(), max_file_size, max_files
+	);
     auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
 
     file_sink->set_level(spdlog::level::info);

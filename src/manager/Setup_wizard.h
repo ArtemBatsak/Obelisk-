@@ -23,7 +23,7 @@
 #include <unistd.h>
 #endif
 
-// Глобальные пути (определены в другом месте)
+
 extern std::string CONFIG_PATH;
 extern std::string TLS_CERT_PATH;
 extern std::string TLS_KEY_PATH;
