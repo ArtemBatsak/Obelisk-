@@ -49,7 +49,7 @@ public:
                 s.total_traffic += s.this_session_traffic;
                 s.this_session_traffic = 0;
             }
-            // save_all без блокировки — мы уже держим mtx_
+            // Inline save_all without lock — we already hold mtx_
             std::ofstream outfile_id(Path::DataServersFilePath().string(), std::ios::trunc);
             if (outfile_id.is_open()) {
                 for (const auto& entry : servers_id) {

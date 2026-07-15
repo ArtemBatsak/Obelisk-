@@ -40,7 +40,7 @@ namespace fs = std::filesystem;
 using asio::ip::tcp;
 
 namespace {
-    // Очищает файлы данных DataServers от предыдущих запусков (лежат в папке exe, не в temp)
+    // Clean DataServers disk state left from previous test runs (lives in exe dir, not temp)
     static void cleanup_data_files() {
         std::error_code ec;
         fs::remove(Path::DataServersFilePath(), ec);
@@ -94,7 +94,7 @@ namespace {
             fs::create_directories(path_);
             old_ = fs::current_path();
             fs::current_path(path_);
-            // Перенаправляем DataServers в temp-директорию
+            // Redirect DataServers to use temp dir instead of /etc/obelisk
             const char* old_env = std::getenv("OBELISK_DIR");
             old_obelisk_dir_ = old_env ? old_env : "";
             set_env("OBELISK_DIR", path_.string());
@@ -684,7 +684,7 @@ namespace {
                     connector.stop();
                 }
                 catch (...) {
-                    // Игнорируем ошибки
+                    // Ignore errors
                 }
                 });
         }

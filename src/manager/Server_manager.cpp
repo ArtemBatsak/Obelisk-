@@ -51,7 +51,7 @@ void ServerManager::shutdown_all() {
         if (s) s->shutdown();
     }
 
-    // Таймаут 10 сек: если сервера не завершились — принудительно закрываем всё
+    // Timeout 10s: force close acceptors if servers don't shutdown in time
     shutdown_timer_.expires_after(std::chrono::seconds(10));
     shutdown_timer_.async_wait([this](const asio::error_code& ec) {
         if (ec == asio::error::operation_aborted) return;
