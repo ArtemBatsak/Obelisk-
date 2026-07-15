@@ -43,10 +43,26 @@ private:
     bool is_port_available(int port);
 public:
     ~DataServers() {
-        for (const auto& s : servers_id) {
-            calculate_total_traffic(s.id);
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            for (auto& s : servers_id) {
+                s.total_traffic += s.this_session_traffic;
+                s.this_session_traffic = 0;
+            }
+            // save_all без блокировки — мы уже держим mtx_
+            std::ofstream outfile_id(Path::DataServersFilePath().string(), std::ios::trunc);
+            if (outfile_id.is_open()) {
+                for (const auto& entry : servers_id) {
+                    outfile_id << entry.to_string() << "\n";
+                }
+            }
+            std::ofstream outfile_port(Path::DataPortsFilePath().string(), std::ios::trunc);
+            if (outfile_port.is_open()) {
+                for (int port : ports) {
+                    outfile_port << port << "\n";
+                }
+            }
         }
-        save_all();
         spdlog::info("DataServers destroyed. Final save completed.");
     }
     DataServers();

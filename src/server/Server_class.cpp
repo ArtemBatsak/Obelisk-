@@ -74,6 +74,7 @@ void GrayServer::check_data_pool() {
     if (!check_in_progress.compare_exchange_strong(expected, true))
         return;
 
+    std::size_t current_pool_size;
     {
         std::lock_guard<std::mutex> lock(data_pool_mutex);
 
@@ -86,9 +87,10 @@ void GrayServer::check_data_pool() {
                 ++it;
             }
         }
+        current_pool_size = data_pool.size();
     }
 
-    if (data_pool.size() < pool_size) {
+    if (current_pool_size < static_cast<std::size_t>(pool_size)) {
         current_otp = generate_otp();
 
         if (!control_socket || !control_socket->lowest_layer().is_open()) {
@@ -375,7 +377,6 @@ void GrayServer::try_create_pair() {
     pair->client_socket = client_sock;
     pair->data_socket = data_sock;
     pair->pair_id = generate_id(client_sock);
-    pair->done_count = 2;
     pair->trafic_in = 0;
     pair->trafic_out = 0;
 
@@ -510,6 +511,7 @@ void GrayServer::remove_all_pairs() {
 void GrayServer::send_control_packet(uint32_t type, uint32_t value, std::function<void(const asio::error_code&)> handler) {
     if (!alive || !control_socket || !control_socket->lowest_layer().is_open()) {
 		spdlog::error("Server {}: send_control_packet failed: control socket is not available", id);
+        if (handler) handler(asio::error::make_error_code(asio::error::operation_aborted));
         return;
     }
     auto pkt = std::make_shared<Packet>();

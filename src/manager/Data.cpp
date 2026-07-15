@@ -218,6 +218,10 @@ bool DataServers::add_id(const std::string comment_, int control_port, const std
         }
     }
 
+    if (selected_port == -1) {
+        spdlog::error("No available ports in pool for new server");
+        return false;
+    }
 
     new_id = gen_id();
     Server_struct entry;
@@ -429,8 +433,7 @@ uint32_t get_random(unsigned int min, unsigned int max) {
     unsigned int random_val;
 
     if (RAND_bytes(reinterpret_cast<unsigned char*>(&random_val), sizeof(random_val)) != 1) {
-        throw std::runtime_error("OpenSSL: Error generating random bytes, we will fallback to std::rand()");
-
+        spdlog::warn("OpenSSL RAND_bytes failed, falling back to std::rand()");
         random_val = static_cast<unsigned int>(std::rand());
     }
 

@@ -39,6 +39,12 @@ namespace fs = std::filesystem;
 using asio::ip::tcp;
 
 namespace {
+    // Очищает файлы данных DataServers от предыдущих запусков (лежат в папке exe, не в temp)
+    static void cleanup_data_files() {
+        std::error_code ec;
+        fs::remove(Path::DataServersFilePath(), ec);
+        fs::remove(Path::DataPortsFilePath(), ec);
+    }
     static bool write_main_test_config(uint16_t control_port, uint16_t data_port, uint16_t web_port) {
         fs::create_directories("config");
         std::ofstream cfg(CONFIG_PATH);
@@ -263,10 +269,22 @@ namespace {
         ScopedTempDir temp;
         SCOPED_TRACE("Class under test: ConfigManager");
 
+        // Use dynamic ports to avoid conflicts with busy ports on the test machine
+        asio::io_context probe_io;
+        const uint16_t test_control = reserve_free_port(probe_io);
+        const uint16_t test_data = reserve_free_port(probe_io);
+        const uint16_t test_web = reserve_free_port(probe_io);
+
         auto wizard = std::make_shared<ConfigManager>();
         EXPECT_FALSE(wizard->check_config());
 
-        std::istringstream fake_input("\n\n\n\nstrongpass\n");
+        std::ostringstream input_builder;
+        input_builder << test_control << "\n";
+        input_builder << test_data << "\n";
+        input_builder << test_web << "\n";
+        input_builder << "\n";  // admin username default
+        input_builder << "strongpass\n";
+        std::istringstream fake_input(input_builder.str());
         auto* old_in = std::cin.rdbuf(fake_input.rdbuf());
         wizard->set_up();
         std::cin.rdbuf(old_in);
@@ -277,9 +295,9 @@ namespace {
         EXPECT_TRUE(loaded->check_config());
 
         Config cfg = loaded->get_config();
-        EXPECT_EQ(cfg.control_port, 44555);
-        EXPECT_EQ(cfg.data_port, 50021);
-        EXPECT_EQ(cfg.web_port, 8000);
+        EXPECT_EQ(cfg.control_port, test_control);
+        EXPECT_EQ(cfg.data_port, test_data);
+        EXPECT_EQ(cfg.web_port, test_web);
         EXPECT_EQ(cfg.admin_username, "admin");
         EXPECT_FALSE(cfg.admin_password_hash.empty());
         EXPECT_FALSE(cfg.admin_password_salt.empty());
@@ -417,6 +435,7 @@ namespace {
         const uint16_t control_port = reserve_free_port(io);
         const uint16_t data_port = reserve_free_port(io);
 
+        cleanup_data_files();
         auto running = std::make_shared<std::atomic<bool>>(true);
         auto data_servers = std::make_shared<DataServers>();
         ASSERT_TRUE(data_servers->add_ports(31000, 31010));
@@ -601,6 +620,7 @@ namespace {
         const uint16_t control_port = reserve_free_port(io);
         const uint16_t data_port = reserve_free_port(io);
 
+        cleanup_data_files();
         auto running = std::make_shared<std::atomic<bool>>(true);
         auto data_servers = std::make_shared<DataServers>();
         ASSERT_TRUE(data_servers->add_ports(31000, 31020));

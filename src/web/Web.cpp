@@ -63,9 +63,15 @@ void WebAdmin::apply_auth_middleware() {
 
 		// Check for Authorization header
 		if (req.has_header("Authorization")) {
-			std::string auth = req.get_header_value("Authorization"); // "Basic YWRtaW46MTIz"
+			std::string auth = req.get_header_value("Authorization");
 
-			// Check if it starts with "Basic "
+			if (auth.size() < 7 || auth.substr(0, 6) != "Basic ") {
+				res.status = 401;
+				res.set_header("WWW-Authenticate", "Basic realm=\"Admin Panel\"");
+				res.set_content("Access denied", "text/plain");
+				return httplib::Server::HandlerResponse::Handled;
+			}
+
 			std::string base64_part = auth.substr(6);
 
 

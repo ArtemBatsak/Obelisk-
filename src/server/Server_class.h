@@ -44,7 +44,6 @@ struct link_par {
     std::shared_ptr<asio::ip::tcp::socket> data_socket;
     std::shared_ptr<asio::ip::tcp::socket> client_socket;
     std::string pair_id;
-    int done_count = 2;
     std::atomic<uint64_t> trafic_in{ 0 };
     std::atomic<uint64_t> trafic_out{ 0 };
     uint64_t last_in_snapshot{ 0 };

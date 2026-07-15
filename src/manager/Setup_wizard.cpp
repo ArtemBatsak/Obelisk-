@@ -52,15 +52,15 @@ bool ConfigManager::check_config() {
     try {
         load();
 
-        if (config_.control_port <= 0 || config_.control_port > 65535||!is_port_available(config_.control_port)) {
+        if (config_.control_port <= 0 || config_.control_port > 65535) {
             spdlog::error("Invalid control_port in config.json {}", config_.control_port);
             return false;
 		}
-        if (config_.data_port <= 0 || config_.data_port > 65535||!is_port_available(config_.data_port)) {
+        if (config_.data_port <= 0 || config_.data_port > 65535) {
             spdlog::error("Invalid data_port in config.json {}", config_.data_port);
 			return false;
 		}
-        if (config_.web_port <= 0 || config_.web_port > 65535||!is_port_available(config_.web_port)) {
+        if (config_.web_port <= 0 || config_.web_port > 65535) {
             spdlog::error("Invalid web_port in config.json {}", config_.web_port);
 			return false;
         }

@@ -252,6 +252,7 @@ void ServerManager::init_acceptor() {
     spdlog::info("Data acceptor started on port {}", data_port);
     spdlog::info("Control acceptor started on port {}", control_port);
     schedule_traffic_sync();
+    save_data_to_disk();
 }
 
 void ServerManager::async_accept_data() {
@@ -305,20 +306,18 @@ void ServerManager::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock)
             uint32_t id = ntohl(buf->id);
             uint32_t otp = ntohl(buf->otp);
             spdlog::debug("Received data packet for server ID: {}, OTP: {}", id, otp);
-            { 
-                
-                if (self->server_online(id)) {
-
-                    std::lock_guard<std::mutex> lock(self->mtx_);
-                    for (auto& s : self->servers) {
-                        if (s && s->get_id() == id) {
-                            spdlog::debug("Forwarding data connection to GrayServer {}", id);
-                            s->handle_new_data(sock, otp);
-                            return;
-                        }
+            {
+                std::lock_guard<std::mutex> lock(self->mtx_);
+                bool found = false;
+                for (auto& s : self->servers) {
+                    if (s && s->get_id() == id) {
+                        spdlog::debug("Forwarding data connection to GrayServer {}", id);
+                        s->handle_new_data(sock, otp);
+                        found = true;
+                        break;
                     }
                 }
-                else {
+                if (!found) {
                     spdlog::warn("Received data packet for unknown server ID: {}", id);
                     asio::error_code ignored;
                     sock->close(ignored);
@@ -348,6 +347,9 @@ void ServerManager::async_accept_control() {
                         }
                         else {
                             spdlog::error("TLS handshake failed: {}", h_ec.message());
+                            asio::error_code close_ec;
+                            ssl_sock->lowest_layer().shutdown(tcp::socket::shutdown_both, close_ec);
+                            ssl_sock->lowest_layer().close(close_ec);
                         }
                     });
             }
