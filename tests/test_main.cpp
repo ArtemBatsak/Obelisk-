@@ -2,6 +2,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -93,17 +94,37 @@ namespace {
             fs::create_directories(path_);
             old_ = fs::current_path();
             fs::current_path(path_);
+            // Перенаправляем DataServers в temp-директорию
+            const char* old_env = std::getenv("OBELISK_DIR");
+            old_obelisk_dir_ = old_env ? old_env : "";
+            set_env("OBELISK_DIR", path_.string());
         }
 
         ~ScopedTempDir() {
             fs::current_path(old_);
+            if (old_obelisk_dir_.empty())
+                set_env("OBELISK_DIR", "");
+            else
+                set_env("OBELISK_DIR", old_obelisk_dir_);
             std::error_code ec;
             fs::remove_all(path_, ec);
         }
 
     private:
+        static void set_env(const std::string& name, const std::string& value) {
+#ifdef _WIN32
+            _putenv_s(name.c_str(), value.c_str());
+#else
+            if (value.empty())
+                unsetenv(name.c_str());
+            else
+                setenv(name.c_str(), value.c_str(), 1);
+#endif
+        }
+
         fs::path path_;
         fs::path old_;
+        std::string old_obelisk_dir_;
     };
 
     struct DataPacket {
