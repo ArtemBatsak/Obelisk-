@@ -5,7 +5,6 @@
 #include <string>
 #include <utility>
 // OpenSSL
-#ifdef _WIN32
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/rsa.h>
@@ -13,8 +12,7 @@
 #include <openssl/x509.h>
 #include <openssl/evp.h>
 #include <openssl/bn.h>
-#endif
-// For Linux and macOS, link with -lssl -lcrypto
+#include <openssl/bio.h>
 
 // Generate self-signed certificate and private key in PEM format
 std::pair<std::string, std::string> generate_self_signed_cert_pem();

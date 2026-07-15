@@ -1,6 +1,7 @@
 #include "Path.h"
 #include <iostream>
 #include <fstream>
+#include <cstdlib>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -29,6 +30,9 @@ namespace
     // Get obelisk base directory (same on all platforms)
     fs::path GetObeliskBaseDir()
     {
+        const char* env = std::getenv("OBELISK_DIR");
+        if (env && env[0])
+            return fs::path(env);
 #ifdef _WIN32
         // On Windows, use "obelisk" folder next to executable
         return GetAppDir() / "obelisk";

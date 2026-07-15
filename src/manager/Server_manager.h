@@ -45,6 +45,7 @@ public:
     ~ServerManager() {
 		traffic_sync_timer.cancel();
         save_data_timer.cancel();
+        shutdown_timer_.cancel();
         if (control_acceptor && control_acceptor->is_open()) control_acceptor->close();
         if (data_acceptor && data_acceptor->is_open()) data_acceptor->close();
         shutdown_all();
@@ -99,6 +100,7 @@ private:
     std::vector<std::pair<uint32_t, uint64_t>> previous_traffic_snapshot;
     asio::steady_timer traffic_sync_timer{ io_context_ };
 	asio::steady_timer save_data_timer{ io_context_ };
+    asio::steady_timer shutdown_timer_{ io_context_ };
     std::chrono::seconds traffic_sync_interval{ 1 };
 	std::chrono::seconds save_data_interval{ 600 }; // Every 10 minutes we will save data to disk
 };

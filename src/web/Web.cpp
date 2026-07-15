@@ -1,26 +1,22 @@
 ﻿#include "Web.h"
 #include "path/Path.h"
+#include <sstream>
 
 
 using json = nlohmann::json;
 
 std::string base64_decode(const std::string& in) {
-	static const std::string table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-	std::vector<int> T(256, -1);
-	for (int i = 0; i < 64; i++) T[table[i]] = i;
+	BIO* b64 = BIO_new(BIO_f_base64());
+	BIO* mem = BIO_new_mem_buf(in.data(), static_cast<int>(in.size()));
+	BIO* chain = BIO_push(b64, mem);
+	BIO_set_flags(chain, BIO_FLAGS_BASE64_NO_NL);
 
-	int val = 0, valb = -8;
-	std::string out;
-	for (unsigned char c : in) {
-		if (T[c] == -1) break;
-		val = (val << 6) + T[c];
-		valb += 6;
-		if (valb >= 0) {
-			out.push_back(char((val >> valb) & 0xFF));
-			valb -= 8;
-		}
-	}
-	return out;
+	std::vector<char> out(in.size());
+	int len = BIO_read(chain, out.data(), static_cast<int>(out.size()));
+	BIO_free_all(chain);
+
+	if (len <= 0) return {};
+	return std::string(out.data(), len);
 }
 
 
@@ -293,6 +289,34 @@ void WebAdmin::start() {
 		catch (...) {
 			res.status = 500;
 		}
+		});
+
+	// --- Metrics ---
+	svr->Get("/metrics", [this](const httplib::Request&, httplib::Response& res) {
+		std::ostringstream out;
+		auto servers = web_data_servers->get_servers();
+		out << "# HELP obelisk_servers_total Total registered servers\n";
+		out << "# TYPE obelisk_servers_total gauge\n";
+		out << "obelisk_servers_total " << servers.size() << "\n\n";
+		for (const auto& s : servers) {
+			bool online = web_server_manager->server_online(s.id);
+			out << "obelisk_server_info{id=\"" << s.id << "\",comment=\""
+				<< s.comment << "\"} " << (online ? 1 : 0) << "\n";
+			if (online) {
+				out << "obelisk_active_pairs{id=\"" << s.id << "\"} "
+					<< web_server_manager->get_active_pairs(s.id) << "\n";
+				out << "obelisk_ping_ms{id=\"" << s.id << "\"} "
+					<< web_server_manager->get_ping(s.id) << "\n";
+				out << "obelisk_traffic_total{id=\"" << s.id << "\"} "
+					<< web_data_servers->get_total_traffic_by_id(s.id) << "\n";
+				out << "obelisk_speed_in_bytes{id=\"" << s.id << "\"} "
+					<< web_server_manager->get_total_speed_in(s.id) << "\n";
+				out << "obelisk_speed_out_bytes{id=\"" << s.id << "\"} "
+					<< web_server_manager->get_total_speed_out(s.id) << "\n";
+			}
+			out << "\n";
+		}
+		res.set_content(out.str(), "text/plain; charset=utf-8");
 		});
 
 	spdlog::info("Admin panel started at https://localhost:{}", port_);
