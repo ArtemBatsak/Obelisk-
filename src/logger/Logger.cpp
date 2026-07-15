@@ -14,16 +14,22 @@ void init_logging()
 	constexpr std::size_t max_file_size = 5 * 1024 * 1024;
 	constexpr std::size_t max_files = 5;
 
-
-	auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-		Path::LogFile(), max_file_size, max_files
-	);
     auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
 
-    file_sink->set_level(spdlog::level::info);
-    console_sink->set_level(spdlog::level::info);
+    std::vector<spdlog::sink_ptr> sinks{ console_sink };
 
-    std::vector<spdlog::sink_ptr> sinks{ console_sink, file_sink };
+	try {
+		auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+			Path::LogFile(), max_file_size, max_files
+		);
+		file_sink->set_level(spdlog::level::info);
+		sinks.push_back(file_sink);
+	}
+	catch (const std::exception& e) {
+		spdlog::warn("Failed to open log file '{}': {}. Console-only logging.", Path::LogFile(), e.what());
+	}
+
+    console_sink->set_level(spdlog::level::info);
 
     auto logger = std::make_shared<spdlog::logger>("obelisk", sinks.begin(), sinks.end());
     logger->set_level(spdlog::level::info);
