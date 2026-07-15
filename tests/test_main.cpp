@@ -40,11 +40,12 @@ namespace fs = std::filesystem;
 using asio::ip::tcp;
 
 namespace {
-    // Clean DataServers disk state left from previous test runs (lives in exe dir, not temp)
-    static void cleanup_data_files() {
+    // Clean DataServers disk state and ensure data directory exists
+    static void prepare_data_dir() {
         std::error_code ec;
         fs::remove(Path::DataServersFilePath(), ec);
         fs::remove(Path::DataPortsFilePath(), ec);
+        fs::create_directories(Path::DataConfigsDirPath(), ec);
     }
     static bool write_main_test_config(uint16_t control_port, uint16_t data_port, uint16_t web_port) {
         fs::create_directories("config");
@@ -456,7 +457,7 @@ namespace {
         const uint16_t control_port = reserve_free_port(io);
         const uint16_t data_port = reserve_free_port(io);
 
-        cleanup_data_files();
+        prepare_data_dir();
         auto running = std::make_shared<std::atomic<bool>>(true);
         auto data_servers = std::make_shared<DataServers>();
         ASSERT_TRUE(data_servers->add_ports(31000, 31010));
@@ -641,7 +642,7 @@ namespace {
         const uint16_t control_port = reserve_free_port(io);
         const uint16_t data_port = reserve_free_port(io);
 
-        cleanup_data_files();
+        prepare_data_dir();
         auto running = std::make_shared<std::atomic<bool>>(true);
         auto data_servers = std::make_shared<DataServers>();
         ASSERT_TRUE(data_servers->add_ports(31000, 31020));
