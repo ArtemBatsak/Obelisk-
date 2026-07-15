@@ -252,6 +252,7 @@ bool DataServers::add_id(const std::string comment_, int control_port, const std
 }
 
 void DataServers::save_all() {
+    std::filesystem::create_directories(Path::DataConfigsDirPath());
     std::ofstream outfile_id(Path::DataServersFilePath().string(), std::ios::trunc);
     if (!outfile_id.is_open()) {
         spdlog::error("Error: cannot open {} for writing!", Path::DataServersFilePath().string());

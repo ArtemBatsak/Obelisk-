@@ -52,16 +52,15 @@ void ServerManager::shutdown_all() {
     }
 
     // Таймаут 10 сек: если сервера не завершились — принудительно закрываем всё
-    auto self = shared_from_this();
     shutdown_timer_.expires_after(std::chrono::seconds(10));
-    shutdown_timer_.async_wait([self](const asio::error_code& ec) {
+    shutdown_timer_.async_wait([this](const asio::error_code& ec) {
         if (ec == asio::error::operation_aborted) return;
         spdlog::warn("Shutdown timeout reached, forcing close of acceptors");
         asio::error_code ignore;
-        if (self->control_acceptor && self->control_acceptor->is_open())
-            self->control_acceptor->close(ignore);
-        if (self->data_acceptor && self->data_acceptor->is_open())
-            self->data_acceptor->close(ignore);
+        if (control_acceptor && control_acceptor->is_open())
+            control_acceptor->close(ignore);
+        if (data_acceptor && data_acceptor->is_open())
+            data_acceptor->close(ignore);
     });
 
     spdlog::info("All GrayServers shutdown requested (timeout 10s)");

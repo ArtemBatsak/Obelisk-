@@ -49,6 +49,7 @@ public:
         if (control_acceptor && control_acceptor->is_open()) control_acceptor->close();
         if (data_acceptor && data_acceptor->is_open()) data_acceptor->close();
         shutdown_all();
+        shutdown_timer_.cancel();
 	}
     
     void start() {
