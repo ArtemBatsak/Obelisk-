@@ -37,6 +37,7 @@ struct Config {
     int control_port;
     int data_port;
     int web_port;
+    int max_pending_clients = 100;
     std::string admin_password_hash;
     std::string admin_username;
     std::string admin_password_salt;

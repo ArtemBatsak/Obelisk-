@@ -1,6 +1,8 @@
 ﻿#include "Server_class.h"
 #include "logger/Logger.h"
-#include <deque>
+#include <openssl/rand.h>
+#include <stdexcept>
+#include <cstring>
 
 void GrayServer::init_acceptor(int client_port) {
     client_acceptor_ = std::make_shared<asio::ip::tcp::acceptor>(
@@ -8,122 +10,159 @@ void GrayServer::init_acceptor(int client_port) {
         asio::ip::tcp::endpoint(asio::ip::tcp::v4(), client_port));
 }
 
-void GrayServer::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock, uint32_t otp) {
-    auto self = shared_from_this();
-    if (!self->alive) return;
-
-
-    uint32_t received_otp = otp;
-    bool otp_valid = false;
-
-    {
-        std::lock_guard<std::mutex> lock(otp_pool_mutex);
-        auto it = std::find(otp_pool.begin(), otp_pool.end(), received_otp);
-        if (it != otp_pool.end()) {
-            otp_valid = true;
-            otp_pool.erase(it);
-        }
-    }
-
-    if (!otp_valid) {
-        spdlog::warn(
-            "Server {}: received OTP {} that is not in the pool; rejecting connection",
-            id, received_otp
-        );
-        try {
-            auto ep = sock->remote_endpoint();
-            spdlog::error(
-                "Server {}: received wrong OTP {} (not in pool) from {}:{}",
-                id, received_otp,
-                ep.address().to_string(), ep.port()
-            );
-        }
-        catch (...) {
-            spdlog::error(
-                "Server {}: received wrong OTP {} (not in pool); remote endpoint unavailable",
-                id, received_otp
-            );
-        }
-
-        asio::error_code ignored;
-        sock->shutdown(asio::ip::tcp::socket::shutdown_both, ignored);
-        sock->close(ignored);
-        return;
-    }
-    self->enable_keepalive(sock);
-
-    {
-        std::lock_guard<std::mutex> lock(data_pool_mutex);
-        data_pool.push_back(sock);
-    }
-    self->try_create_pair();
-
+void GrayServer::purge_expired_otps() {
+    const auto now = Clock::now();
+    otp_pool.erase(
+        std::remove_if(otp_pool.begin(), otp_pool.end(),
+            [&now](const OtpEntry& e) { return now >= e.expires_at; }),
+        otp_pool.end());
 }
 
-uint32_t GrayServer::generate_otp() {
-    static thread_local std::mt19937 rng(std::random_device{}());
-    std::uniform_int_distribution<uint32_t> dist(100000, 999999);
-    return dist(rng);
-}
+void GrayServer::purge_idle_pending() {
+    const auto now = Clock::now();
+    asio::error_code ec;
 
-void GrayServer::check_data_pool() {
-    auto self = shared_from_this();
-    if (!self->alive) return;
-
-    bool expected = false;
-    if (!check_in_progress.compare_exchange_strong(expected, true))
-        return;
-
-    std::size_t current_pool_size;
-    {
-        std::lock_guard<std::mutex> lock(data_pool_mutex);
-
-        auto it = data_pool.begin();
-        while (it != data_pool.end()) {
-            if (!(*it)->is_open()) {
-                it = data_pool.erase(it);
+    auto purge = [&](std::vector<PendingSocket>& pool, const char* kind) {
+        auto it = pool.begin();
+        while (it != pool.end()) {
+            const bool timed_out = (now - it->accepted_at) >= pending_idle_timeout_;
+            const bool closed = !it->sock || !it->sock->is_open();
+            if (timed_out || closed) {
+                if (timed_out && it->sock && it->sock->is_open()) {
+                    spdlog::warn("Server {}: closing idle pending {} socket", id, kind);
+                    it->sock->shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+                    it->sock->close(ec);
+                }
+                it = pool.erase(it);
             }
             else {
                 ++it;
             }
         }
-        current_pool_size = data_pool.size();
-    }
+    };
 
-    if (current_pool_size < static_cast<std::size_t>(pool_size)) {
-        current_otp = generate_otp();
-
-        if (!control_socket || !control_socket->lowest_layer().is_open()) {
-            check_in_progress = false;
-            return;
-        }
-        {
-            std::lock_guard<std::mutex> lock(otp_pool_mutex);
-            otp_pool.push_back(current_otp);
-        }
-		
-        send_control_packet(2, current_otp, [self](const asio::error_code& ec) {
-            if (ec) {
-                
-                spdlog::error("Server {}: failed to send OTP control packet (code {}): {}", self->id, ec.value(), ec.message());
-            }
-            
-            self->check_in_progress = false;
-            });
-    }
-    else {
-        check_in_progress = false;
-    }
-
-    data_pool_timer.expires_after(std::chrono::seconds(2));
-    data_pool_timer.async_wait([self](const asio::error_code& ec) {
-        if (!self->alive || ec == asio::error::operation_aborted) return;
-        self->check_data_pool();
-        });
+    purge(client_pool, "client");
+    purge(data_pool, "data");
 }
 
-void GrayServer::enable_keepalive(std::shared_ptr<asio::ip::tcp::socket> sock)
-{
+std::size_t GrayServer::otp_pool_cap() const {
+    return static_cast<std::size_t>(std::min(pool_size * 2, 128));
+}
+
+void GrayServer::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock, uint32_t otp) {
+    auto self = shared_from_this();
+    asio::post(strand_, [self, sock, otp]() {
+        if (!self->alive) return;
+
+        asio::error_code endpoint_ec;
+        auto remote = sock->remote_endpoint(endpoint_ec);
+        if (endpoint_ec) {
+            spdlog::warn("Server {}: rejecting data socket without remote endpoint", self->id);
+            asio::error_code ignored;
+            sock->close(ignored);
+            return;
+        }
+
+        if (!self->allowed_data_ip_ || remote.address() != *self->allowed_data_ip_) {
+            spdlog::warn("Server {}: rejecting data socket from unexpected IP {} (allowed {})",
+                self->id,
+                remote.address().to_string(),
+                self->allowed_data_ip_ ? self->allowed_data_ip_->to_string() : "unset");
+            asio::error_code ignored;
+            sock->shutdown(asio::ip::tcp::socket::shutdown_both, ignored);
+            sock->close(ignored);
+            return;
+        }
+
+        self->purge_expired_otps();
+
+        bool otp_valid = false;
+        auto it = std::find_if(self->otp_pool.begin(), self->otp_pool.end(),
+            [otp](const OtpEntry& e) { return e.value == otp; });
+        if (it != self->otp_pool.end()) {
+            otp_valid = true;
+            self->otp_pool.erase(it);
+        }
+
+        if (!otp_valid) {
+            spdlog::warn("Server {}: rejecting data socket due to invalid or expired OTP",
+                self->id);
+            asio::error_code ignored;
+            sock->shutdown(asio::ip::tcp::socket::shutdown_both, ignored);
+            sock->close(ignored);
+            return;
+        }
+
+        self->enable_keepalive(sock);
+        self->data_pool.push_back(PendingSocket{ sock, Clock::now() });
+        self->try_create_pair();
+    });
+}
+
+uint32_t GrayServer::generate_otp() {
+    uint32_t raw = 0;
+    if (RAND_bytes(reinterpret_cast<unsigned char*>(&raw), sizeof(raw)) != 1) {
+        spdlog::error("Server {}: RAND_bytes failed while generating OTP", id);
+        throw std::runtime_error("RAND_bytes failed");
+    }
+    return 100000u + (raw % 900000u);
+}
+
+void GrayServer::check_data_pool() {
+    auto self = shared_from_this();
+    if (!self->alive || self->check_in_progress) return;
+    self->check_in_progress = true;
+
+    self->purge_expired_otps();
+    self->purge_idle_pending();
+
+    auto it = self->data_pool.begin();
+    while (it != self->data_pool.end()) {
+        if (!it->sock || !it->sock->is_open()) it = self->data_pool.erase(it);
+        else ++it;
+    }
+
+    const bool need_more_data =
+        self->data_pool.size() < static_cast<std::size_t>(self->pool_size);
+    const bool otp_room = self->otp_pool.size() < self->otp_pool_cap();
+
+    if (need_more_data && otp_room) {
+        bool otp_ready = false;
+        try {
+            self->current_otp = generate_otp();
+            otp_ready = true;
+        }
+        catch (const std::exception& e) {
+            spdlog::error("Server {}: OTP generation failed: {}", self->id, e.what());
+        }
+
+        if (otp_ready && self->control_socket && self->control_socket->lowest_layer().is_open()) {
+            self->otp_pool.push_back(OtpEntry{ self->current_otp, Clock::now() + otp_ttl_ });
+            send_control_packet(2, self->current_otp,
+                [self](const asio::error_code& ec) {
+                    if (ec) {
+                        spdlog::error("Server {}: failed to send OTP control packet (code {}): {}", self->id, ec.value(), ec.message());
+                    }
+                    self->check_in_progress = false;
+                });
+        }
+        else {
+            self->check_in_progress = false;
+        }
+    }
+    else {
+        self->check_in_progress = false;
+    }
+
+    self->data_pool_timer.expires_after(std::chrono::seconds(2));
+    self->data_pool_timer.async_wait(
+        asio::bind_executor(self->strand_, [self](const asio::error_code& ec) {
+            if (!self->alive || ec == asio::error::operation_aborted) return;
+            self->check_data_pool();
+        }));
+}
+
+void GrayServer::enable_keepalive(std::shared_ptr<asio::ip::tcp::socket> sock) {
     asio::error_code ec;
     sock->set_option(asio::socket_base::keep_alive(true), ec);
     if (ec) {
@@ -148,78 +187,62 @@ void GrayServer::enable_keepalive(std::shared_ptr<asio::ip::tcp::socket> sock)
     int interval = 5;
     int count = 3;
     int fd = sock->native_handle();
-
     setsockopt(fd, SOL_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
     setsockopt(fd, SOL_TCP, TCP_KEEPINTVL, &interval, sizeof(interval));
     setsockopt(fd, SOL_TCP, TCP_KEEPCNT, &count, sizeof(count));
 #endif
 }
 
-void GrayServer::shutdown()
-{
+void GrayServer::shutdown() {
     auto self = shared_from_this();
-
-    asio::post(io_context_, [self]() {
-        bool expected = true;
-        if (!self->alive.compare_exchange_strong(expected, false))
-            return;
+    asio::post(strand_, [self]() {
+        if (!self->alive) return;
+        self->alive = false;
 
         self->ping_timer.cancel();
         self->pong_timer.cancel();
         self->data_pool_timer.cancel();
-		self->speed_monitor_timer.cancel();
+        self->speed_monitor_timer.cancel();
 
         asio::error_code ec;
 
         if (self->client_acceptor_ && self->client_acceptor_->is_open())
             self->client_acceptor_->close(ec);
 
-        if (self->control_socket &&
-            self->control_socket->lowest_layer().is_open())
-        {
-            self->control_socket->lowest_layer().shutdown(
-                asio::ip::tcp::socket::shutdown_both, ec);
+        if (self->control_socket && self->control_socket->lowest_layer().is_open()) {
+            self->control_socket->lowest_layer().shutdown(asio::ip::tcp::socket::shutdown_both, ec);
             self->control_socket->lowest_layer().close(ec);
         }
 
         self->remove_all_pairs();
 
-        {
-            std::lock_guard<std::mutex> lock(self->data_pool_mutex);
-            for (auto& sock : self->data_pool) {
-                if (sock && sock->is_open())
-                    sock->close(ec);
-            }
-            self->data_pool.clear();
+        for (auto& s : self->data_pool) {
+            if (s.sock && s.sock->is_open()) s.sock->close(ec);
         }
+        self->data_pool.clear();
 
-        {
-            std::lock_guard<std::mutex> lock(self->client_pool_mutex);
-            for (auto& sock : self->client_pool) {
-                if (sock && sock->is_open())
-                    sock->close(ec);
-            }
-            self->client_pool.clear();
+        for (auto& s : self->client_pool) {
+            if (s.sock && s.sock->is_open()) s.sock->close(ec);
         }
+        self->client_pool.clear();
+        self->otp_pool.clear();
 
         if (auto mgr = self->manager_.lock()) {
             mgr->remove(self->id);
         }
-
-        });
+    });
 }
 
 void GrayServer::send_ping() {
     auto self = shared_from_this();
-    if (!self->alive || !control_socket || !control_socket->lowest_layer().is_open())
+    if (!self->alive || !self->control_socket || !self->control_socket->lowest_layer().is_open())
         return;
 
-    // If we're already waiting for a pong, don't send another ping
-    bool expected = false;
-    if (!self->waiting_for_pong.compare_exchange_strong(expected, true)) {
+    if (self->waiting_for_pong) {
         spdlog::warn("Server {}: send_ping skipped because a pong is already awaited", self->id);
-        return; 
+        return;
     }
+    self->waiting_for_pong = true;
 
     send_control_packet(1, 0, [self](const asio::error_code& ec) {
         if (ec) {
@@ -229,10 +252,8 @@ void GrayServer::send_ping() {
             return;
         }
         self->last_ping_start_ = Clock::now();
-       
-        // Start waiting for pong (async read + timeout)
         self->wait_pong();
-        });
+    });
 }
 
 void GrayServer::wait_pong() {
@@ -240,42 +261,31 @@ void GrayServer::wait_pong() {
     if (!self->alive || !self->control_socket || !self->control_socket->lowest_layer().is_open())
         return;
 
-    
-    self->pong_timer.cancel();  
+    self->pong_timer.cancel();
     self->pong_timer.expires_after(std::chrono::seconds(self->ping_timeout_sec));
-    self->pong_timer.async_wait([self](const asio::error_code& ec) {
-        if (ec == asio::error::operation_aborted) return;
-        if (!self->alive) return;
+    self->pong_timer.async_wait(
+        asio::bind_executor(self->strand_, [self](const asio::error_code& ec) {
+            if (ec == asio::error::operation_aborted || !self->alive) return;
 
-        spdlog::error("Server {}: pong timeout, closing control socket", self->id);
-        asio::error_code ignored;
-        self->control_socket->lowest_layer().close(ignored);
-        
-        self->waiting_for_pong = false;
-        });
+            spdlog::error("Server {}: pong timeout, closing control socket", self->id);
+            asio::error_code ignored;
+            self->control_socket->lowest_layer().close(ignored);
+            self->waiting_for_pong = false;
+        }));
 
-   
     asio::async_read(*self->control_socket, asio::buffer(self->pong_buf),
-        [self](const asio::error_code& ec, std::size_t bytes_transferred) {
-
-            if (!self->alive) {
-                self->waiting_for_pong = false;
-                return;
-            }
+        asio::bind_executor(self->strand_, [self](const asio::error_code& ec, std::size_t bytes_transferred) {
+            if (!self->alive) { self->waiting_for_pong = false; return; }
 
             if (ec) {
-                if (ec == asio::error::eof || bytes_transferred == 0) {
-                    spdlog::warn("Server {}: received 0 bytes or connection closed", self->id);
-                }
-                else {
+                if (ec != asio::error::eof) {
                     spdlog::error("Server {}: control read error (code {}): {}", self->id, ec.value(), ec.message());
                 }
-                
                 self->waiting_for_pong = false;
                 self->shutdown();
                 return;
             }
-            
+
             if (bytes_transferred < sizeof(Packet)) {
                 spdlog::warn("Server {}: received incomplete control packet: {} bytes", self->id, bytes_transferred);
                 self->waiting_for_pong = false;
@@ -285,31 +295,26 @@ void GrayServer::wait_pong() {
 
             Packet pkt;
             std::memcpy(&pkt, self->pong_buf.data(), sizeof(Packet));
-            uint32_t pkt_type = ntohl(pkt.type);
-
-            
-          
 
             auto elapsed = Clock::now() - self->last_ping_start_;
             self->last_ping_ms_ = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
             self->last_ping_ms = static_cast<uint32_t>(self->last_ping_ms_.count());
 
-            
             self->waiting_for_pong = false;
             self->pong_timer.cancel();
             self->schedule_ping();
-        }
-    );
+        }));
 }
 
 void GrayServer::schedule_ping() {
     auto self = shared_from_this();
     self->ping_timer.cancel();
     self->ping_timer.expires_after(std::chrono::seconds(ping_interval_sec));
-    self->ping_timer.async_wait([self](const asio::error_code& ec) {
-        if (!self->alive || ec == asio::error::operation_aborted) return;
-        self->send_ping();
-        });
+    self->ping_timer.async_wait(
+        asio::bind_executor(strand_, [self](const asio::error_code& ec) {
+            if (!self->alive || ec == asio::error::operation_aborted) return;
+            self->send_ping();
+        }));
 }
 
 void GrayServer::async_accept_client() {
@@ -319,78 +324,61 @@ void GrayServer::async_accept_client() {
     auto sock = std::make_shared<asio::ip::tcp::socket>(io_context_);
 
     client_acceptor_->async_accept(*sock,
-        [self, sock](const asio::error_code& ec)
-        {
-            if (!self->alive) return;
-            if (!self->client_acceptor_ || !self->client_acceptor_->is_open()) return;
+        asio::bind_executor(strand_, [self, sock](const asio::error_code& ec) {
+            if (!self->alive || !self->client_acceptor_ || !self->client_acceptor_->is_open()) return;
 
-            if (!ec)
-            {
-                {
-                    std::lock_guard<std::mutex> lock(self->client_pool_mutex);
-                    self->client_pool.push_back(sock);
+            if (!ec) {
+                self->purge_idle_pending();
+                if (self->client_pool.size() >= static_cast<std::size_t>(self->max_pending_clients)) {
+                    spdlog::warn("Server {}: client_pool full ({}), rejecting connection",
+                        self->id, self->max_pending_clients);
+                    asio::error_code ignored;
+                    sock->close(ignored);
                 }
-                self->try_create_pair();
+                else {
+                    self->client_pool.push_back(PendingSocket{ sock, Clock::now() });
+                    self->try_create_pair();
+                }
             }
-
             self->async_accept_client();
-        });
+        }));
 }
 
 std::string GrayServer::generate_id(std::shared_ptr<asio::ip::tcp::socket> sock) {
     auto endpoint = sock->remote_endpoint();
-    auto ip = endpoint.address().to_string();
-    auto port = std::to_string(endpoint.port());
-
-
-    std::string id_str = ip + ":" + port;
-
-    return id_str;
+    return endpoint.address().to_string() + ":" + std::to_string(endpoint.port());
 }
 
 void GrayServer::try_create_pair() {
-    std::shared_ptr<asio::ip::tcp::socket> client_sock;
-    std::shared_ptr<asio::ip::tcp::socket> data_sock;
-	
-    {
-        std::lock_guard<std::mutex> lock_client(client_pool_mutex);
-        std::lock_guard<std::mutex> lock_data(data_pool_mutex);
+    if (client_pool.empty() || data_pool.empty()) return;
 
-        if (client_pool.empty() || data_pool.empty()) return;
+    auto client_pending = client_pool.back();
+    client_pool.pop_back();
+    auto client_sock = client_pending.sock;
 
-        client_sock = client_pool.back();
-        client_pool.pop_back();
-
-        auto it = std::find_if(data_pool.begin(), data_pool.end(),
-            [](const auto& sock) { return sock->is_open(); });
-
-        if (it == data_pool.end()) {
-            client_pool.push_back(client_sock);
-            return;
-        }
-
-        data_sock = *it;
-        data_pool.erase(it);
+    auto it = std::find_if(data_pool.begin(), data_pool.end(),
+        [](const PendingSocket& s) { return s.sock && s.sock->is_open(); });
+    if (it == data_pool.end()) {
+        client_pool.push_back(client_pending);
+        return;
     }
+
+    auto data_sock = it->sock;
+    data_pool.erase(it);
 
     auto pair = std::make_shared<link_par>();
     pair->client_socket = client_sock;
     pair->data_socket = data_sock;
     pair->pair_id = generate_id(client_sock);
-    pair->trafic_in = 0;
-    pair->trafic_out = 0;
-
-    {
-        std::lock_guard<std::mutex> lock(link_pool_mutex);
-        link_pool.push_back(pair);
-    }
+    link_pool.push_back(pair);
+    active_pairs_count_.store(link_pool.size(), std::memory_order_release);
 
     enable_keepalive(client_sock);
     enable_keepalive(data_sock);
 
     splice_loop(client_sock, data_sock, pair, true);
     splice_loop(data_sock, client_sock, pair, false);
-	check_data_pool();
+    check_data_pool();
 }
 
 void GrayServer::splice_loop(
@@ -400,175 +388,153 @@ void GrayServer::splice_loop(
     bool is_inbound)
 {
     auto self = shared_from_this();
-
     auto buffer = std::make_shared<std::array<char, 64 * 1024>>();
-
     auto do_read = std::make_shared<std::function<void()>>();
 
-    *do_read = [self, in_sock, out_sock, pair, buffer, is_inbound, do_read]() mutable
-        {
-            in_sock->async_read_some(
-                asio::buffer(*buffer),
-                [self, in_sock, out_sock, pair, buffer, is_inbound, do_read]
-                (const asio::error_code& ec, std::size_t bytes)
-                {
-                    if (ec || bytes == 0) {
-                        if (ec != asio::error::eof &&
-                            ec != asio::error::operation_aborted) {
-                            spdlog::debug("Pair {}: read error ({}): {}",
-                                pair->pair_id, ec.value(), ec.message());
-                        }
-                        *do_read = nullptr;
-                        self->remove_pair(pair->pair_id);
-                        return;
-                    }
-
-                    if (is_inbound)
-                        pair->trafic_in += bytes;
-                    else
-                        pair->trafic_out += bytes;
-
-                    asio::async_write(
-                        *out_sock,
-                        asio::buffer(buffer->data(), bytes),
-                        [self, pair, do_read]
-                        (const asio::error_code& ec_write, std::size_t)
-                        {
-                            if (ec_write) {
-                                if (ec_write != asio::error::eof &&
-                                    ec_write != asio::error::operation_aborted) {
-                                    spdlog::debug("Pair {}: write error ({}): {}",
-                                        pair->pair_id, ec_write.value(), ec_write.message());
-                                }
-                                *do_read = nullptr;
-                                self->remove_pair(pair->pair_id);
-                                return;
-                            }
-
-                            (*do_read)();
-                        }
-                    );
+    *do_read = [self, in_sock, out_sock, pair, buffer, is_inbound, do_read]() mutable {
+        in_sock->async_read_some(asio::buffer(*buffer),
+            [self, in_sock, out_sock, pair, buffer, is_inbound, do_read]
+            (const asio::error_code& ec, std::size_t bytes) {
+                if (ec || bytes == 0) {
+                    *do_read = nullptr;
+                    asio::post(self->strand_, [self, id = pair->pair_id]() {
+                        self->remove_pair(id);
+                    });
+                    return;
                 }
-            );
-        };
+
+                if (is_inbound) pair->trafic_in += bytes;
+                else pair->trafic_out += bytes;
+
+                asio::async_write(*out_sock, asio::buffer(buffer->data(), bytes),
+                    [self, pair, do_read](const asio::error_code& ec_write, std::size_t) {
+                        if (ec_write) {
+                            *do_read = nullptr;
+                            asio::post(self->strand_, [self, id = pair->pair_id]() {
+                                self->remove_pair(id);
+                            });
+                            return;
+                        }
+                        (*do_read)();
+                    });
+            });
+    };
 
     (*do_read)();
 }
 
-void GrayServer::remove_pair(std::string pair_id) {
+void GrayServer::remove_pair(const std::string& pair_id) {
+    auto it = std::find_if(link_pool.begin(), link_pool.end(),
+        [&pair_id](const std::shared_ptr<link_par>& ptr) {
+            return ptr && ptr->pair_id == pair_id;
+        });
 
-    std::shared_ptr<asio::ip::tcp::socket> client_sock;
-    std::shared_ptr<asio::ip::tcp::socket> data_sock;
-    {
-        std::lock_guard<std::mutex> lock(link_pool_mutex);
+    if (it == link_pool.end()) return;
 
-        auto it = std::find_if(link_pool.begin(), link_pool.end(),
-            [&pair_id](const std::shared_ptr<link_par>& ptr) {
-                return ptr && ptr->pair_id == pair_id;
-            });
-
-        if (it == link_pool.end()) return;
-
-        client_sock = (*it)->client_socket;
-        data_sock = (*it)->data_socket;
-
-        link_pool.erase(it);
-    }
+    auto client_sock = (*it)->client_socket;
+    auto data_sock = (*it)->data_socket;
+    link_pool.erase(it);
+    active_pairs_count_.store(link_pool.size(), std::memory_order_release);
 
     if (client_sock && client_sock->is_open()) {
         asio::error_code ec;
         client_sock->shutdown(asio::ip::tcp::socket::shutdown_both, ec);
         client_sock->close(ec);
     }
-
     if (data_sock && data_sock->is_open()) {
         asio::error_code ec;
         data_sock->shutdown(asio::ip::tcp::socket::shutdown_both, ec);
         data_sock->close(ec);
     }
-	
 }
 
 void GrayServer::remove_all_pairs() {
-    while (true) {
-        std::string target_id;
-        
-        {
-            std::lock_guard<std::mutex> lock(link_pool_mutex);
-            if (link_pool.empty()) {
-                break; 
-            }
-
-            target_id = link_pool.back()->pair_id;
-        }
-
+    while (!link_pool.empty()) {
+        auto target_id = link_pool.back()->pair_id;
         remove_pair(target_id);
     }
-
     spdlog::info("Server {}: all pairs have been removed", id);
 }
 
-void GrayServer::send_control_packet(uint32_t type, uint32_t value, std::function<void(const asio::error_code&)> handler) {
+void GrayServer::send_control_packet(uint32_t type, uint32_t value,
+    std::function<void(const asio::error_code&)> handler) {
     if (!alive || !control_socket || !control_socket->lowest_layer().is_open()) {
-		spdlog::error("Server {}: send_control_packet failed: control socket is not available", id);
+        spdlog::error("Server {}: send_control_packet failed: control socket is not available", id);
         if (handler) handler(asio::error::make_error_code(asio::error::operation_aborted));
         return;
     }
     auto pkt = std::make_shared<Packet>();
     pkt->type = htonl(type);
     pkt->value = htonl(value);
-	
-    asio::async_write(*control_socket,
-        asio::buffer(pkt.get(), sizeof(Packet)),
-        [self = shared_from_this(), pkt, handler](const asio::error_code& ec, std::size_t) {
-            
+
+    asio::async_write(*control_socket, asio::buffer(pkt.get(), sizeof(Packet)),
+        asio::bind_executor(strand_, [self = shared_from_this(), pkt, handler](const asio::error_code& ec, std::size_t) {
             if (ec) {
                 spdlog::error("Server {}: send_control_packet failed (code {}): {}", self->id, ec.value(), ec.message());
                 self->shutdown();
             }
             if (handler) handler(ec);
-        });
+        }));
+}
+
+void GrayServer::start() {
+    auto self = shared_from_this();
+    asio::post(strand_, [self]() {
+        if (!self->alive) return;
+
+        if (!self->allowed_data_ip_ && self->control_socket) {
+            asio::error_code ec;
+            auto ep = self->control_socket->lowest_layer().remote_endpoint(ec);
+            if (!ec) {
+                self->allowed_data_ip_ = ep.address();
+            }
+        }
+        if (self->allowed_data_ip_) {
+            spdlog::info("Server {}: data sockets allowed only from {}",
+                self->id, self->allowed_data_ip_->to_string());
+        }
+        else {
+            spdlog::warn("Server {}: allowed data IP unset; data sockets will be rejected",
+                self->id);
+        }
+
+        self->init_acceptor(self->client_port);
+        self->async_accept_client();
+        self->check_data_pool();
+        self->schedule_ping();
+        self->start_speed_monitor();
+    });
 }
 
 void GrayServer::start_speed_monitor() {
-    auto self = shared_from_this();
-
-    if (!self->alive) return;
-
-    if (self->speed_monitor_running.exchange(true)) {
-        return;
-    }
-
-    self->last_measure_time = std::chrono::steady_clock::now();
-    self->schedule_speed_monitor();
+    if (!alive || speed_monitor_running) return;
+    speed_monitor_running = true;
+    last_measure_time = std::chrono::steady_clock::now();
+    schedule_speed_monitor();
 }
 
 void GrayServer::schedule_speed_monitor() {
     auto self = shared_from_this();
+    self->speed_monitor_timer.expires_after(std::chrono::seconds(1));
 
-    self->speed_monitor_timer.expires_at(
-        std::chrono::steady_clock::now() + std::chrono::seconds(1));
+    self->speed_monitor_timer.async_wait(
+        asio::bind_executor(self->strand_, [self](const asio::error_code& ec) {
+            if (ec || !self->alive) {
+                self->speed_monitor_running = false;
+                return;
+            }
 
-    self->speed_monitor_timer.async_wait([self](const asio::error_code& ec) {
-        if (ec || !self->alive) {
-            self->speed_monitor_running = false;
-            return;
-        }
+            auto now = std::chrono::steady_clock::now();
+            double seconds = std::chrono::duration<double>(now - self->last_measure_time).count();
+            self->last_measure_time = now;
 
-        auto now = std::chrono::steady_clock::now();
-        double seconds = std::chrono::duration<double>(now - self->last_measure_time).count();
-        self->last_measure_time = now;
+            if (seconds < 1e-6) {
+                self->schedule_speed_monitor();
+                return;
+            }
 
-        if (seconds < 1e-6) {
-            self->schedule_speed_monitor();
-            return;
-        }
-
-        uint64_t total_bytes_in = 0;
-        uint64_t total_bytes_out = 0;
-
-        {
-            std::lock_guard<std::mutex> lock(self->link_pool_mutex);
+            uint64_t total_bytes_in = 0;
+            uint64_t total_bytes_out = 0;
 
             for (auto& pair : self->link_pool) {
                 if (!pair) continue;
@@ -581,7 +547,6 @@ void GrayServer::schedule_speed_monitor() {
 
                 if (current_in >= pair->last_in_snapshot)
                     delta_in = current_in - pair->last_in_snapshot;
-
                 if (current_out >= pair->last_out_snapshot)
                     delta_out = current_out - pair->last_out_snapshot;
 
@@ -591,16 +556,13 @@ void GrayServer::schedule_speed_monitor() {
                 pair->last_in_snapshot = current_in;
                 pair->last_out_snapshot = current_out;
             }
-        }
 
-        double speed_in = total_bytes_in / seconds;
-        double speed_out = total_bytes_out / seconds;
+            double speed_in = total_bytes_in / seconds;
+            double speed_out = total_bytes_out / seconds;
 
-        constexpr double BYTES_TO_MB = 1.0 / (1000.0 * 1000.0);
-
-        self->total_speed_in.store((uint64_t)speed_in, std::memory_order_relaxed);
-        self->total_speed_out.store((uint64_t)speed_out, std::memory_order_relaxed);
-		self->total_traffic_session += total_bytes_in + total_bytes_out;
-        self->schedule_speed_monitor();
-        });
+            self->total_speed_in.store(static_cast<uint64_t>(speed_in), std::memory_order_relaxed);
+            self->total_speed_out.store(static_cast<uint64_t>(speed_out), std::memory_order_relaxed);
+            self->total_traffic_session += total_bytes_in + total_bytes_out;
+            self->schedule_speed_monitor();
+        }));
 }

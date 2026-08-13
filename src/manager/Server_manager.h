@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <atomic>
+#include <algorithm>
 #include <coroutine>
 #include <chrono>
 #include <asio.hpp>
@@ -31,7 +32,8 @@ public:
         std::shared_ptr<DataServers> data_servers_,
         std::string tls_cert_path_,
         std::string tls_key_path_,
-        asio::any_io_executor io) :
+        asio::any_io_executor io,
+        int max_pending_clients_ = 100) :
 		running(running_),
         control_port(CONTROL_PORT_),
         data_port(DATA_PORT_),
@@ -39,7 +41,8 @@ public:
         tls_cert_path(std::move(tls_cert_path_)),
         tls_key_path(std::move(tls_key_path_)),
         io_context_(io),
-        ssl_ctx(asio::ssl::context::tls_server)
+        ssl_ctx(asio::ssl::context::tls_server),
+        max_pending_clients(std::max(1, max_pending_clients_))
     {
     }
     ~ServerManager() {
@@ -89,6 +92,7 @@ private:
     asio::any_io_executor io_context_;
     const int control_port;
 	const int data_port;
+    const int max_pending_clients;
     std::string tls_cert_path;
     std::string tls_key_path;
     std::string tls_certificate_pem;

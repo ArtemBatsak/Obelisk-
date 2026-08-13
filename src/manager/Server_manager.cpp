@@ -1,5 +1,6 @@
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <filesystem>
@@ -384,7 +385,7 @@ asio::awaitable<void> ServerManager::async_authorize(std::shared_ptr<asio::ssl::
         co_await asio::async_read(*ssl_sock, asio::buffer(&req, sizeof(req)), asio::use_awaitable);
 
         uint32_t id = ntohl(req.id);
-        uint32_t pool_size = ntohl(req.pool_size);
+        uint32_t pool_size = std::clamp(ntohl(req.pool_size), 1u, 64u);
 
         X509* peer_cert = SSL_get_peer_certificate(ssl_sock->native_handle());
         if (!peer_cert) {
@@ -420,7 +421,7 @@ asio::awaitable<void> ServerManager::async_authorize(std::shared_ptr<asio::ssl::
                 auto p = shared_data->get_ports_by_id(id);
                 auto server = std::make_shared<GrayServer>(
                     id, ssl_sock, co_await asio::this_coro::executor,
-                    p, data_port, pool_size, self
+                    p, data_port, static_cast<int>(pool_size), max_pending_clients, self
                 );
 
                 //  Send response with ports

@@ -64,6 +64,10 @@ bool ConfigManager::check_config() {
             spdlog::error("Invalid web_port in config.json {}", config_.web_port);
 			return false;
         }
+        if (config_.max_pending_clients <= 0) {
+            spdlog::error("Invalid max_pending_clients in config.json {}", config_.max_pending_clients);
+            return false;
+        }
         if (config_.admin_username.empty()) {
             spdlog::error("admin_username cannot be empty in config.json");
             return false;
@@ -168,6 +172,7 @@ void ConfigManager::set_up() {
     config_.admin_password_salt = hash_result.salt;
     config_.tls_cert_path = TLS_CERT_PATH;
     config_.tls_key_path = TLS_KEY_PATH;
+    config_.max_pending_clients = 100;
     if (!ensure_tls_material()) {
         spdlog::error("Failed to create TLS certificate/key files.");
         return;
@@ -200,6 +205,7 @@ void ConfigManager::load() {
         config_.control_port = j.at("control_port").get<int>();
         config_.data_port = j.at("data_port").get<int>();
         config_.web_port = j.at("web_port").get<int>();
+        config_.max_pending_clients = j.value("max_pending_clients", 100);
 
         config_.admin_username = j.at("admin_username").get<std::string>();
         config_.admin_password_hash = j.at("admin_password_hash").get<std::string>();
@@ -225,6 +231,7 @@ bool ConfigManager::save() {
     j["control_port"] = config_.control_port;
     j["data_port"] = config_.data_port;
     j["web_port"] = config_.web_port;
+    j["max_pending_clients"] = config_.max_pending_clients;
     j["admin_password_hash"] = config_.admin_password_hash;
     j["admin_username"] = config_.admin_username;
 	j["admin_password_salt"] = config_.admin_password_salt;

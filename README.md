@@ -38,6 +38,7 @@ Main fields:
 - `control_port`
 - `data_port`
 - `web_port`
+- `max_pending_clients` — max unpaired client sockets waiting for a data peer (default `100`)
 - `admin_username`
 - `admin_password_hash`
 - `admin_password_salt`
@@ -51,6 +52,7 @@ Example:
   "control_port": 44555,
   "data_port": 50021,
   "web_port": 8000,
+  "max_pending_clients": 100,
   "admin_username": "admin",
   "admin_password_hash": "<sha256(password+salt)>",
   "admin_password_salt": "<random_salt>",

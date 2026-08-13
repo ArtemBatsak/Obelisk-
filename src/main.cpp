@@ -72,7 +72,8 @@ int main()
             data_servers,
             TLS_CERT_PATH,
             TLS_KEY_PATH,
-            io.get_executor()
+            io.get_executor(),
+            config.max_pending_clients
         );
 		server_manager->start();
 
