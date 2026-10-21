@@ -1,56 +1,13 @@
-#include "Server_class.h"
+﻿#include "Server_class.h"
 #include "logger/Logger.h"
 #include <openssl/rand.h>
 #include <stdexcept>
 #include <cstring>
-#include <cerrno>
-
-namespace {
-
-// Проверка живости простаивающего data-сокета от Phantom.
-// Пары не создаём с сокетом, чей peer уже закрыт (EOF) — иначе первый же
-// байт от клиента уходит в мёртвый сокет и клиент получает Connection reset.
-bool pending_socket_is_alive(const std::shared_ptr<asio::ip::tcp::socket>& s) {
-    if (!s || !s->is_open()) return false;
-
-    int fd = s->native_handle();
-    if (fd < 0) return false;
-
-    char b = 0;
-#ifdef _WIN32
-    const int flags = MSG_PEEK;
-#else
-    const int flags = MSG_PEEK | MSG_DONTWAIT;
-#endif
-    int r = ::recv(fd, &b, 1, flags);
-    if (r == 0) return false; // EOF: peer закрыл соединение
-
-    if (r < 0) {
-#ifdef _WIN32
-        int err = WSAGetLastError();
-        return err == WSAEWOULDBLOCK;
-#else
-        return errno == EAGAIN || errno == EWOULDBLOCK;
-#endif
-    }
-    return true; // есть непрочитанные данные — считаем живым
-}
-
-} // namespace
 
 void GrayServer::init_acceptor(int client_port) {
-    // Конструктор acceptor(io, endpoint) бросает system_error, если порт занят.
-    // Исключение из обработчика asio вызывает terminate и SIGABRT всего процесса.
-    auto acceptor = std::make_shared<asio::ip::tcp::acceptor>(io_context_);
-    const asio::ip::tcp::endpoint endpoint(
-        asio::ip::tcp::v4(), static_cast<asio::ip::port_type>(client_port));
-    acceptor->open(endpoint.protocol());
-    // Порт убитого процесса ещё в TIME_WAIT. SO_REUSEADDR позволяет слушать его
-    // снова, но не даёт двум живым слушателям занять один и тот же порт.
-    acceptor->set_option(asio::socket_base::reuse_address(true));
-    acceptor->bind(endpoint);
-    acceptor->listen();
-    client_acceptor_ = std::move(acceptor);
+    client_acceptor_ = std::make_shared<asio::ip::tcp::acceptor>(
+        io_context_,
+        asio::ip::tcp::endpoint(asio::ip::tcp::v4(), client_port));
 }
 
 void GrayServer::purge_expired_otps() {
@@ -221,34 +178,18 @@ void GrayServer::enable_keepalive(std::shared_ptr<asio::ip::tcp::socket> sock) {
 #ifdef _WIN32
     tcp_keepalive ka;
     ka.onoff = 1;
-    ka.keepalivetime = 120000;
-    ka.keepaliveinterval = 15000;
+    ka.keepalivetime = 20000;
+    ka.keepaliveinterval = 5000;
     DWORD bytesReturned;
     WSAIoctl(sock->native_handle(), SIO_KEEPALIVE_VALS, &ka, sizeof(ka), nullptr, 0, &bytesReturned, nullptr, nullptr);
 #else
-    int idle = 120;
-    int interval = 15;
-    int count = 4;
+    int idle = 20;
+    int interval = 5;
+    int count = 3;
     int fd = sock->native_handle();
     setsockopt(fd, SOL_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
     setsockopt(fd, SOL_TCP, TCP_KEEPINTVL, &interval, sizeof(interval));
     setsockopt(fd, SOL_TCP, TCP_KEEPCNT, &count, sizeof(count));
-#endif
-}
-
-// Клэмп MSS на клиентском сокете: спасает клиентов с меньшим MTU / сломанным
-// PMTUD (типичный случай «один человек не может зайти»): большие пакеты от узла
-// к нему иначе теряются, TCP ретрансмитит и рвёт соединение по таймауту.
-void GrayServer::clamp_mss(std::shared_ptr<asio::ip::tcp::socket> sock) {
-#ifdef _WIN32
-    (void)sock;
-#else
-    if (!sock || !sock->is_open()) return;
-    int mss = 1360;
-    int fd = sock->native_handle();
-    if (setsockopt(fd, IPPROTO_TCP, TCP_MAXSEG, &mss, sizeof(mss)) != 0) {
-        spdlog::warn("Server {}: TCP_MAXSEG clamp failed (errno {})", id, errno);
-    }
 #endif
 }
 
@@ -326,36 +267,15 @@ void GrayServer::wait_pong() {
         asio::bind_executor(self->strand_, [self](const asio::error_code& ec) {
             if (ec == asio::error::operation_aborted || !self->alive) return;
 
-            self->ping_misses_ += 1;
-            spdlog::warn("Server {}: pong miss {}/{}", self->id, self->ping_misses_, GrayServer::kPingMissLimit);
-            if (self->ping_misses_ < GrayServer::kPingMissLimit) {
-                self->pong_abandoned_ = true;
-                self->waiting_for_pong = false;
-                asio::error_code ignored;
-                if (self->control_socket) {
-                    self->control_socket->lowest_layer().cancel(ignored);
-                }
-                self->schedule_ping();
-                return;
-            }
-
-            spdlog::error("Server {}: pong missed {} times, closing control socket", self->id, self->ping_misses_);
+            spdlog::error("Server {}: pong timeout, closing control socket", self->id);
             asio::error_code ignored;
-            if (self->control_socket) {
-                self->control_socket->lowest_layer().close(ignored);
-            }
+            self->control_socket->lowest_layer().close(ignored);
             self->waiting_for_pong = false;
         }));
 
     asio::async_read(*self->control_socket, asio::buffer(self->pong_buf),
         asio::bind_executor(self->strand_, [self](const asio::error_code& ec, std::size_t bytes_transferred) {
             if (!self->alive) { self->waiting_for_pong = false; return; }
-
-            if (ec == asio::error::operation_aborted && self->pong_abandoned_) {
-                self->pong_abandoned_ = false;
-                self->waiting_for_pong = false;
-                return;
-            }
 
             if (ec) {
                 if (ec != asio::error::eof) {
@@ -379,7 +299,6 @@ void GrayServer::wait_pong() {
             auto elapsed = Clock::now() - self->last_ping_start_;
             self->last_ping_ms_ = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
             self->last_ping_ms = static_cast<uint32_t>(self->last_ping_ms_.count());
-            self->ping_misses_ = 0;
 
             self->waiting_for_pong = false;
             self->pong_timer.cancel();
@@ -417,14 +336,6 @@ void GrayServer::async_accept_client() {
                     sock->close(ignored);
                 }
                 else {
-                    asio::error_code ep_ec;
-                    auto ep = sock->remote_endpoint(ep_ec);
-                    self->clamp_mss(sock);
-                    spdlog::info("Server {}: client connected from {} (pending={}, data_ready={})",
-                        self->id,
-                        ep_ec ? std::string("?") : ep.address().to_string(),
-                        self->client_pool.size() + 1,
-                        self->data_pool.size());
                     self->client_pool.push_back(PendingSocket{ sock, Clock::now() });
                     self->try_create_pair();
                 }
@@ -445,30 +356,15 @@ void GrayServer::try_create_pair() {
     client_pool.pop_back();
     auto client_sock = client_pending.sock;
 
-    // Берём первый ЖИВОЙ data-сокет; мёртвые (peer закрыт) выкидываем,
-    // чтобы не спарить клиента с уже оборванным туннелем.
-    std::shared_ptr<asio::ip::tcp::socket> data_sock;
-    while (!data_pool.empty()) {
-        auto cand = data_pool.front();
-        data_pool.erase(data_pool.begin());
-
-        if (cand.sock && cand.sock->is_open() && pending_socket_is_alive(cand.sock)) {
-            data_sock = cand.sock;
-            break;
-        }
-
-        spdlog::warn("Server {}: dropping dead idle data socket before pairing", id);
-        if (cand.sock && cand.sock->is_open()) {
-            asio::error_code ignored;
-            cand.sock->shutdown(asio::ip::tcp::socket::shutdown_both, ignored);
-            cand.sock->close(ignored);
-        }
-    }
-
-    if (!data_sock) {
+    auto it = std::find_if(data_pool.begin(), data_pool.end(),
+        [](const PendingSocket& s) { return s.sock && s.sock->is_open(); });
+    if (it == data_pool.end()) {
         client_pool.push_back(client_pending);
         return;
     }
+
+    auto data_sock = it->sock;
+    data_pool.erase(it);
 
     auto pair = std::make_shared<link_par>();
     pair->client_socket = client_sock;
@@ -479,8 +375,6 @@ void GrayServer::try_create_pair() {
 
     enable_keepalive(client_sock);
     enable_keepalive(data_sock);
-
-    spdlog::info("Server {}: pair established {} (active={})", id, pair->pair_id, link_pool.size());
 
     splice_loop(client_sock, data_sock, pair, true);
     splice_loop(data_sock, client_sock, pair, false);
@@ -494,27 +388,15 @@ void GrayServer::splice_loop(
     bool is_inbound)
 {
     auto self = shared_from_this();
-    auto buffer = std::make_shared<std::array<char, BuffSize>>();
+    auto buffer = std::make_shared<std::array<char, 64 * 1024>>();
     auto do_read = std::make_shared<std::function<void()>>();
 
     *do_read = [self, in_sock, out_sock, pair, buffer, is_inbound, do_read]() mutable {
         in_sock->async_read_some(asio::buffer(*buffer),
-            asio::bind_executor(self->strand_,
             [self, in_sock, out_sock, pair, buffer, is_inbound, do_read]
             (const asio::error_code& ec, std::size_t bytes) {
                 if (ec || bytes == 0) {
                     *do_read = nullptr;
-                    if (ec == asio::error::operation_aborted) {
-                        // штатный teardown — не засоряем лог
-                    }
-                    else if (ec && ec != asio::error::eof) {
-                        spdlog::warn("Server {}: pair {} {} read error: {}", self->id, pair->pair_id,
-                            is_inbound ? "client->data" : "data->client", ec.message());
-                    }
-                    else {
-                        spdlog::info("Server {}: pair {} {} closed (eof)", self->id, pair->pair_id,
-                            is_inbound ? "client->data" : "data->client");
-                    }
                     asio::post(self->strand_, [self, id = pair->pair_id]() {
                         self->remove_pair(id);
                     });
@@ -525,20 +407,17 @@ void GrayServer::splice_loop(
                 else pair->trafic_out += bytes;
 
                 asio::async_write(*out_sock, asio::buffer(buffer->data(), bytes),
-                    asio::bind_executor(self->strand_,
                     [self, pair, do_read](const asio::error_code& ec_write, std::size_t) {
                         if (ec_write) {
                             *do_read = nullptr;
-                            if (ec_write != asio::error::operation_aborted)
-                                spdlog::warn("Server {}: pair {} write error: {}", self->id, pair->pair_id, ec_write.message());
                             asio::post(self->strand_, [self, id = pair->pair_id]() {
                                 self->remove_pair(id);
                             });
                             return;
                         }
                         (*do_read)();
-                    }));
-                }));
+                    });
+            });
     };
 
     (*do_read)();
@@ -554,8 +433,6 @@ void GrayServer::remove_pair(const std::string& pair_id) {
 
     auto client_sock = (*it)->client_socket;
     auto data_sock = (*it)->data_socket;
-    const uint64_t bytes_in = (*it)->trafic_in.load(std::memory_order_relaxed);
-    const uint64_t bytes_out = (*it)->trafic_out.load(std::memory_order_relaxed);
     link_pool.erase(it);
     active_pairs_count_.store(link_pool.size(), std::memory_order_release);
 
@@ -569,8 +446,6 @@ void GrayServer::remove_pair(const std::string& pair_id) {
         data_sock->shutdown(asio::ip::tcp::socket::shutdown_both, ec);
         data_sock->close(ec);
     }
-
-    spdlog::info("Server {}: pair removed {} (active={}, in={}B out={}B)", id, pair_id, link_pool.size(), bytes_in, bytes_out);
 }
 
 void GrayServer::remove_all_pairs() {
@@ -592,41 +467,13 @@ void GrayServer::send_control_packet(uint32_t type, uint32_t value,
     pkt->type = htonl(type);
     pkt->value = htonl(value);
 
-    control_tx_queue_.push_back(ControlTxItem{ std::move(pkt), std::move(handler) });
-    flush_control_write();
-}
-
-void GrayServer::flush_control_write() {
-    if (control_write_in_flight_) return;
-
-    if (!control_socket || !control_socket->lowest_layer().is_open()) {
-        while (!control_tx_queue_.empty()) {
-            auto h = std::move(control_tx_queue_.front().handler);
-            control_tx_queue_.pop_front();
-            if (h) h(asio::error::make_error_code(asio::error::operation_aborted));
-        }
-        return;
-    }
-
-    if (control_tx_queue_.empty()) return;
-
-    control_write_in_flight_ = true;
-
-    auto item = std::move(control_tx_queue_.front());
-    control_tx_queue_.pop_front();
-    auto pkt = std::move(item.pkt);
-    auto handler = std::move(item.handler);
-
     asio::async_write(*control_socket, asio::buffer(pkt.get(), sizeof(Packet)),
-        asio::bind_executor(strand_, [self = shared_from_this(), pkt, handler = std::move(handler)](const asio::error_code& ec, std::size_t) {
+        asio::bind_executor(strand_, [self = shared_from_this(), pkt, handler](const asio::error_code& ec, std::size_t) {
             if (ec) {
                 spdlog::error("Server {}: send_control_packet failed (code {}): {}", self->id, ec.value(), ec.message());
                 self->shutdown();
             }
             if (handler) handler(ec);
-
-            self->control_write_in_flight_ = false;
-            self->flush_control_write();
         }));
 }
 
@@ -651,14 +498,7 @@ void GrayServer::start() {
                 self->id);
         }
 
-        try {
-            self->init_acceptor(self->client_port);
-        } catch (const std::exception& e) {
-            spdlog::error("Server {}: cannot listen on client port {}: {}",
-                self->id, self->client_port, e.what());
-            self->shutdown();
-            return;
-        }
+        self->init_acceptor(self->client_port);
         self->async_accept_client();
         self->check_data_pool();
         self->schedule_ping();

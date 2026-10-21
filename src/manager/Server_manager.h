@@ -33,8 +33,7 @@ public:
         std::string tls_cert_path_,
         std::string tls_key_path_,
         asio::any_io_executor io,
-        int max_pending_clients_ = 100,
-        int max_data_pool_ = 64) :
+        int max_pending_clients_ = 100) :
 		running(running_),
         control_port(CONTROL_PORT_),
         data_port(DATA_PORT_),
@@ -43,8 +42,7 @@ public:
         tls_key_path(std::move(tls_key_path_)),
         io_context_(io),
         ssl_ctx(asio::ssl::context::tls_server),
-        max_pending_clients((std::max)(1, max_pending_clients_)),
-        max_data_pool((std::clamp)(max_data_pool_, 1, 64))
+        max_pending_clients(std::max(1, max_pending_clients_))
     {
     }
     ~ServerManager() {
@@ -71,8 +69,7 @@ public:
     void async_accept_data();
     void handle_new_data(std::shared_ptr<tcp::socket> sock);
     void async_accept_control();
-    asio::awaitable<void> async_authorize(std::shared_ptr<asio::ssl::stream<tcp::socket>> ssl_sock,
-                                          const std::string& peer_addr);
+    asio::awaitable<void> async_authorize(std::shared_ptr<asio::ssl::stream<tcp::socket>> ssl_sock);
 
 
     void add(std::shared_ptr<GrayServer> server);
@@ -96,7 +93,6 @@ private:
     const int control_port;
 	const int data_port;
     const int max_pending_clients;
-    const int max_data_pool;
     std::string tls_cert_path;
     std::string tls_key_path;
     std::string tls_certificate_pem;

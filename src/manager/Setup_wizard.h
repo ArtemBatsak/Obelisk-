@@ -43,17 +43,6 @@ struct Config {
     std::string admin_password_salt;
     std::string tls_cert_path;
     std::string tls_key_path;
-
-    // --- Kenny multiplay: node & service API ---
-    std::string node_id = "obelisk-1";          // идентификатор узла (мониторинг/будущие ноды)
-    std::string web_bind = "127.0.0.1";         // на чём слушать web (приватно)
-    std::string service_api_key;                // секрет для машина-машина (/api/service/*)
-    std::string allow_api_peers;                // CSV IP, с кого разрешён /api/service/* (пусто = любой с ключом)
-    int max_sessions = 500;                     // лимит одновременных сессий (защита от исчерпания)
-    int port_pool_start = 0;                    // авто-заливка пула портов
-    int port_pool_end = 0;                      // авто-заливка пула портов
-    int data_pool_max = 64;                     // потолок data-пула Phantom (ожидающие клиента сокеты, макс.64)
-    std::string public_ip;                      // явный внешний IP узла (пусто = определять автоматически)
 };
 
 class ConfigManager : public std::enable_shared_from_this<ConfigManager> {
@@ -71,7 +60,6 @@ private:
 
     bool save();
     void load();
-    void apply_env();
     bool ensure_tls_material();
 
     HashResult get_safe_hash(const std::string& password);

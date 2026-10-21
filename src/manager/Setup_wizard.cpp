@@ -3,72 +3,9 @@
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
-#include <cstdlib>
-#include <cctype>
-#include <algorithm>
-#include <set>
 #include <openssl/x509.h>
 #include <openssl/pem.h>
 #include <openssl/evp.h>
-#include <openssl/rand.h>
-
-namespace {
-
-std::string env_str(const char* name)
-{
-    const char* v = std::getenv(name);
-    return (v && v[0]) ? std::string(v) : std::string();
-}
-
-int env_int(const char* name, int def, int min, int max)
-{
-    std::string s = env_str(name);
-    if (s.empty()) return def;
-    try {
-        int v = std::stoi(s);
-        if (v < min) v = min;
-        if (v > max) v = max;
-        return v;
-    }
-    catch (...) { return def; }
-}
-
-std::string trim(const std::string& s)
-{
-    size_t b = s.find_first_not_of(" \t\r\n");
-    if (b == std::string::npos) return {};
-    size_t e = s.find_last_not_of(" \t\r\n");
-    return s.substr(b, e - b + 1);
-}
-
-// Разбор CSV "a,b,c" -> set
-std::set<std::string> split_csv(const std::string& s)
-{
-    std::set<std::string> out;
-    std::stringstream ss(s);
-    std::string part;
-    while (std::getline(ss, part, ',')) {
-        part = trim(part);
-        if (!part.empty()) out.insert(part);
-    }
-    return out;
-}
-
-// Случайный hex-токен заданной длины в байтах
-std::string generate_token_hex(size_t bytes)
-{
-    std::vector<unsigned char> buf(bytes);
-    if (RAND_bytes(buf.data(), static_cast<int>(bytes)) != 1) {
-        spdlog::error("RAND_bytes failed while generating token");
-        return std::string(bytes * 2, '0');
-    }
-    std::stringstream ss;
-    ss << std::hex << std::setfill('0');
-    for (auto b : buf) ss << std::setw(2) << static_cast<int>(b);
-    return ss.str();
-}
-
-} // namespace
 
 ConfigManager::ConfigManager()
 {
@@ -107,125 +44,54 @@ void ConfigManager::cleanup_network() {
 
 bool ConfigManager::check_config() {
     std::ifstream file(CONFIG_PATH);
-    const bool has_file = file.good();
 
-    if (has_file) {
-        try {
-            load(); // читает config.json
+    if (!file.good()) {
+        return false;
+    }
+
+    try {
+        load();
+
+        if (config_.control_port <= 0 || config_.control_port > 65535) {
+            spdlog::error("Invalid control_port in config.json {}", config_.control_port);
+            return false;
+		}
+        if (config_.data_port <= 0 || config_.data_port > 65535) {
+            spdlog::error("Invalid data_port in config.json {}", config_.data_port);
+			return false;
+		}
+        if (config_.web_port <= 0 || config_.web_port > 65535) {
+            spdlog::error("Invalid web_port in config.json {}", config_.web_port);
+			return false;
         }
-        catch (...) {
+        if (config_.max_pending_clients <= 0) {
+            spdlog::error("Invalid max_pending_clients in config.json {}", config_.max_pending_clients);
             return false;
         }
-    }
+        if (config_.admin_username.empty()) {
+            spdlog::error("admin_username cannot be empty in config.json");
+            return false;
+		}
+        if (config_.admin_password_hash.empty() || config_.admin_password_salt.empty()) {
+            spdlog::error("admin_password_hash and admin_password_salt must be set in config.json");
+            return false;
+		}
 
-    // env всегда переопределяет конфиг (удобный деплой/секреты)
-    apply_env();
-
-    // Неинтерактивный bootstrap, если файла нет и хватает env
-    if (!has_file) {
-        if (config_.control_port <= 0 || config_.data_port <= 0 || config_.web_port <= 0) {
-            spdlog::info("No config.json and not enough OBELISK_* env to bootstrap.");
-            return false; // main запустит интерактивный set_up()
+        if (config_.control_port == config_.data_port ||
+            config_.control_port == config_.web_port ||
+            config_.data_port == config_.web_port) {
+            spdlog::error("All ports in config.json must be unique!");
+            return false;
         }
-        if (config_.admin_username.empty())
-            config_.admin_username = "admin";
-        if (config_.admin_password_hash.empty()) {
-            const std::string pw = env_str("OBELISK_ADMIN_PASS");
-            const std::string use = pw.empty() ? "change-me" : pw;
-            HashResult h = get_safe_hash(use);
-            config_.admin_password_hash = h.hash;
-            config_.admin_password_salt = h.salt;
-            if (pw.empty())
-                spdlog::warn("OBELISK_ADMIN_PASS not set, using default 'change-me' (rotate it!)");
+        
+        if (!ensure_tls_material()) {
+            return false;
         }
-        if (config_.service_api_key.empty()) {
-            config_.service_api_key = generate_token_hex(24);
-            spdlog::warn("OBELISK_SERVICE_API_KEY not set, generated a random one (save it!)");
-        }
-        config_.tls_cert_path = config_.tls_cert_path.empty() ? TLS_CERT_PATH : config_.tls_cert_path;
-        config_.tls_key_path = config_.tls_key_path.empty() ? TLS_KEY_PATH : config_.tls_key_path;
-        ensure_tls_material();
-        save(); // персистим конфиг, чтобы дальше не зависеть от env
-        spdlog::info("Bootstrapped Obelisk config from env (node_id={}, pool={}-{})",
-                     config_.node_id, config_.port_pool_start, config_.port_pool_end);
-    }
 
-    if (config_.control_port <= 0 || config_.control_port > 65535) {
-        spdlog::error("Invalid control_port in config.json {}", config_.control_port);
+        return true;
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to parse config.json: {}", e.what());
         return false;
-    }
-    if (config_.data_port <= 0 || config_.data_port > 65535) {
-        spdlog::error("Invalid data_port in config.json {}", config_.data_port);
-        return false;
-    }
-    if (config_.web_port <= 0 || config_.web_port > 65535) {
-        spdlog::error("Invalid web_port in config.json {}", config_.web_port);
-        return false;
-    }
-    if (config_.max_pending_clients <= 0) {
-        spdlog::error("Invalid max_pending_clients in config.json {}", config_.max_pending_clients);
-        return false;
-    }
-    if (config_.max_sessions <= 0) {
-        spdlog::error("Invalid max_sessions in config.json {}", config_.max_sessions);
-        return false;
-    }
-    if (config_.data_pool_max < 1 || config_.data_pool_max > 64) {
-        spdlog::error("Invalid data_pool_max in config.json {}", config_.data_pool_max);
-        return false;
-    }
-    if (config_.admin_username.empty()) {
-        spdlog::error("admin_username cannot be empty in config.json");
-        return false;
-    }
-    if (config_.admin_password_hash.empty() || config_.admin_password_salt.empty()) {
-        spdlog::error("admin_password_hash and admin_password_salt must be set in config.json");
-        return false;
-    }
-
-    if (config_.control_port == config_.data_port ||
-        config_.control_port == config_.web_port ||
-        config_.data_port == config_.web_port) {
-        spdlog::error("All ports in config.json must be unique!");
-        return false;
-    }
-
-    if (config_.port_pool_start > 0 && config_.port_pool_end >= config_.port_pool_start) {
-        // диапазон корректен
-    }
-
-    if (!ensure_tls_material()) {
-        return false;
-    }
-
-    return true;
-}
-
-void ConfigManager::apply_env() {
-    if (!env_str("OBELISK_NODE_ID").empty()) config_.node_id = env_str("OBELISK_NODE_ID");
-    config_.control_port = env_int("OBELISK_CONTROL_PORT", config_.control_port, 1, 65535);
-    config_.data_port = env_int("OBELISK_DATA_PORT", config_.data_port, 1, 65535);
-    config_.web_port = env_int("OBELISK_WEB_PORT", config_.web_port, 1, 65535);
-    config_.max_pending_clients = env_int("OBELISK_MAX_PENDING_CLIENTS", config_.max_pending_clients, 1, 10000);
-    config_.max_sessions = env_int("OBELISK_MAX_SESSIONS", config_.max_sessions, 1, 100000);
-    config_.port_pool_start = env_int("OBELISK_PORT_POOL_START", config_.port_pool_start, 0, 65535);
-    config_.port_pool_end = env_int("OBELISK_PORT_POOL_END", config_.port_pool_end, 0, 65535);
-    config_.data_pool_max = env_int("OBELISK_DATA_POOL_MAX", config_.data_pool_max, 1, 64);
-
-    if (!env_str("OBELISK_WEB_BIND").empty()) config_.web_bind = env_str("OBELISK_WEB_BIND");
-    if (!env_str("OBELISK_PUBLIC_IP").empty()) config_.public_ip = env_str("OBELISK_PUBLIC_IP");
-    if (!env_str("OBELISK_SERVICE_API_KEY").empty()) config_.service_api_key = env_str("OBELISK_SERVICE_API_KEY");
-    if (!env_str("OBELISK_ALLOW_API_PEERS").empty()) config_.allow_api_peers = env_str("OBELISK_ALLOW_API_PEERS");
-
-    // Пароль админки из env: хэшируем со стабильной солью
-    if (!env_str("OBELISK_ADMIN_USER").empty()) config_.admin_username = env_str("OBELISK_ADMIN_USER");
-    const std::string admin_pass = env_str("OBELISK_ADMIN_PASS");
-    if (!admin_pass.empty()) {
-        if (config_.admin_password_salt.empty())
-            config_.admin_password_salt = generate_random_salt(16);
-        HashResult h = get_safe_hash(admin_pass);
-        config_.admin_password_hash = h.hash;
-        config_.admin_password_salt = h.salt;
     }
 }
 
@@ -307,13 +173,6 @@ void ConfigManager::set_up() {
     config_.tls_cert_path = TLS_CERT_PATH;
     config_.tls_key_path = TLS_KEY_PATH;
     config_.max_pending_clients = 100;
-    if (config_.node_id.empty()) config_.node_id = "obelisk-1";
-    if (config_.web_bind.empty()) config_.web_bind = "127.0.0.1";
-    if (config_.service_api_key.empty()) {
-        config_.service_api_key = generate_token_hex(24);
-        spdlog::warn("Generated service_api_key; save it: {}", config_.service_api_key);
-    }
-    if (config_.max_sessions <= 0) config_.max_sessions = 500;
     if (!ensure_tls_material()) {
         spdlog::error("Failed to create TLS certificate/key files.");
         return;
@@ -355,16 +214,6 @@ void ConfigManager::load() {
         config_.tls_cert_path = j.value("tls_cert_path", TLS_CERT_PATH);
         config_.tls_key_path = j.value("tls_key_path", TLS_KEY_PATH);
 
-        config_.node_id = j.value("node_id", "obelisk-1");
-        config_.web_bind = j.value("web_bind", "127.0.0.1");
-        config_.service_api_key = j.value("service_api_key", "");
-        config_.allow_api_peers = j.value("allow_api_peers", "");
-        config_.max_sessions = j.value("max_sessions", 500);
-        config_.port_pool_start = j.value("port_pool_start", 0);
-        config_.port_pool_end = j.value("port_pool_end", 0);
-        config_.data_pool_max = j.value("data_pool_max", 64);
-        config_.public_ip = j.value("public_ip", "");
-
     }
     catch (const nlohmann::json::out_of_range& e) {
         throw std::runtime_error("Config error: missing required field -> " + std::string(e.what()));
@@ -388,15 +237,6 @@ bool ConfigManager::save() {
 	j["admin_password_salt"] = config_.admin_password_salt;
     j["tls_cert_path"] = config_.tls_cert_path;
     j["tls_key_path"] = config_.tls_key_path;
-    j["node_id"] = config_.node_id;
-    j["web_bind"] = config_.web_bind;
-    j["service_api_key"] = config_.service_api_key;
-    j["allow_api_peers"] = config_.allow_api_peers;
-    j["max_sessions"] = config_.max_sessions;
-    j["port_pool_start"] = config_.port_pool_start;
-    j["port_pool_end"] = config_.port_pool_end;
-    j["data_pool_max"] = config_.data_pool_max;
-    j["public_ip"] = config_.public_ip;
     try {
         std::ofstream file(CONFIG_PATH);
         if (!file.is_open()) return false; 

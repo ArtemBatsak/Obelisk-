@@ -188,7 +188,7 @@ bool ServerManager::server_online(uint32_t id) {
 
 uint32_t ServerManager::get_ping(uint32_t id) {
     std::lock_guard<std::mutex> lock(mtx_);
-    uint32_t ping = 0;
+    uint32_t ping = -1;
     for (const auto& s : servers) {
         if (s && s->get_id() == id) {
             ping = s->get_ping();
@@ -204,7 +204,7 @@ uint32_t ServerManager::get_active_pairs(uint32_t id) {
             return s->get_active_pairs();
         }
     }
-    return 0;
+    return -1;
 }
 
 void ServerManager::start_up_tls() {
@@ -258,23 +258,9 @@ std::string ServerManager::get_tls_certificate_pem() const {
     return tls_certificate_pem;
 }
 
-namespace {
-
-std::shared_ptr<tcp::acceptor> listen_reusable(const asio::any_io_executor& executor, int port) {
-    auto acceptor = std::make_shared<tcp::acceptor>(executor);
-    const tcp::endpoint endpoint(tcp::v4(), static_cast<asio::ip::port_type>(port));
-    acceptor->open(endpoint.protocol());
-    acceptor->set_option(asio::socket_base::reuse_address(true));
-    acceptor->bind(endpoint);
-    acceptor->listen();
-    return acceptor;
-}
-
-} // namespace
-
 void ServerManager::init_acceptor() {
-    control_acceptor = listen_reusable(io_context_, control_port);
-    data_acceptor = listen_reusable(io_context_, data_port);
+    control_acceptor = std::make_shared<tcp::acceptor>(io_context_, tcp::endpoint(tcp::v4(), control_port));
+    data_acceptor = std::make_shared<tcp::acceptor>(io_context_, tcp::endpoint(tcp::v4(), data_port));
     spdlog::info("Data acceptor started on port {}", data_port);
     spdlog::info("Control acceptor started on port {}", control_port);
     schedule_traffic_sync();
@@ -316,23 +302,9 @@ void ServerManager::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock)
 
     auto buf = std::make_shared<DATA_PACKET>();
 
-    // Timeout: data-сокет, который так и не прислал DATA_PACKET, закрываем,
-    // чтобы не копить висячие сокеты на data-порту. Таймер и чтение на общем
-    // strand — чтобы таймер не закрыл сокет сразу после успешного чтения.
-    auto data_strand = asio::make_strand(self->io_context_);
-    auto data_deadline = std::make_shared<asio::steady_timer>(data_strand);
-    data_deadline->expires_after(std::chrono::seconds(8));
-    data_deadline->async_wait(asio::bind_executor(data_strand, [sock](const asio::error_code& ec) {
-        if (ec == asio::error::operation_aborted) return;
-        spdlog::warn("Data socket timed out before DATA_PACKET, closing");
-        asio::error_code ignored;
-        sock->close(ignored);
-    }));
-
+    
     asio::async_read(*sock, asio::buffer(buf.get(), sizeof(DATA_PACKET)),
-        asio::bind_executor(data_strand,
-        [self, sock, buf, data_deadline](const asio::error_code& ec, std::size_t bytes_read) {
-            data_deadline->cancel();
+        [self, sock, buf](const asio::error_code& ec, std::size_t bytes_read) {
             if (!self->running) return;
 
             if (ec || bytes_read != sizeof(DATA_PACKET)) {
@@ -364,7 +336,7 @@ void ServerManager::handle_new_data(std::shared_ptr<asio::ip::tcp::socket> sock)
                 }
             }
             
-        }));
+        });
 }
 
 void ServerManager::async_accept_control() {
@@ -378,19 +350,15 @@ void ServerManager::async_accept_control() {
             if (!self->running) return;
 
             if (!ec) {
-                asio::error_code endpoint_ec;
-                auto remote = ssl_sock->lowest_layer().remote_endpoint(endpoint_ec);
-                const std::string peer_addr = endpoint_ec ? "unknown" : remote.address().to_string();
-
                 ssl_sock->async_handshake(asio::ssl::stream_base::server,
-                    [self, ssl_sock, peer_addr](const asio::error_code& h_ec) {
+                    [self, ssl_sock](const asio::error_code& h_ec) {
                         if (!h_ec) {
 
-                            asio::co_spawn(asio::make_strand(self->io_context_),
-                                self->async_authorize(ssl_sock, peer_addr), asio::detached);
+                            asio::co_spawn(self->io_context_,
+                                self->async_authorize(ssl_sock), asio::detached);
                         }
                         else {
-                            spdlog::error("TLS handshake failed: peer={} reason={}", peer_addr, h_ec.message());
+                            spdlog::error("TLS handshake failed: {}", h_ec.message());
                             asio::error_code close_ec;
                             ssl_sock->lowest_layer().shutdown(tcp::socket::shutdown_both, close_ec);
                             ssl_sock->lowest_layer().close(close_ec);
@@ -406,40 +374,21 @@ void ServerManager::async_accept_control() {
         });
 }
 
-asio::awaitable<void> ServerManager::async_authorize(std::shared_ptr<asio::ssl::stream<tcp::socket>> ssl_sock,
-                                                     const std::string& peer_addr)
+asio::awaitable<void> ServerManager::async_authorize(std::shared_ptr<asio::ssl::stream<tcp::socket>> ssl_sock)
 {
     auto self = shared_from_this();
-    const std::string addr = peer_addr.empty() ? "unknown" : peer_addr;
-    uint32_t id = 0;
     try {
-
-        //  Timeout на рукопожатие: если Phantom подключился и молчит,
-        //  закрываем сокет, чтобы не копить мёртвые корутины/фд.
-        //  Таймер строится на том же strand, что и корутина, чтобы исключить
-        //  гонку «таймер закрыл сокет сразу после успешного чтения».
-        auto handshake_deadline = std::make_shared<asio::steady_timer>(co_await asio::this_coro::executor);
-        handshake_deadline->expires_after(std::chrono::seconds(8));
-        handshake_deadline->async_wait([ssl_sock, addr](const asio::error_code& ec) {
-            if (ec == asio::error::operation_aborted) return;
-            spdlog::warn("Control handshake timed out: peer={}", addr);
-            asio::error_code ignored;
-            ssl_sock->lowest_layer().close(ignored);
-        });
+        
 
         //  Wait for request
         struct { uint32_t id; uint32_t pool_size; } req;
         co_await asio::async_read(*ssl_sock, asio::buffer(&req, sizeof(req)), asio::use_awaitable);
-        handshake_deadline->cancel();
 
-        id = ntohl(req.id);
-        uint32_t pool_size = (std::clamp)(static_cast<uint32_t>(ntohl(req.pool_size)), 1u, static_cast<uint32_t>(max_data_pool));
-
-        spdlog::debug("Control request received: peer={} id={} pool_size={}", addr, id, pool_size);
+        uint32_t id = ntohl(req.id);
+        uint32_t pool_size = std::clamp(ntohl(req.pool_size), 1u, 64u);
 
         X509* peer_cert = SSL_get_peer_certificate(ssl_sock->native_handle());
         if (!peer_cert) {
-            spdlog::error("Authorization rejected: peer={} id={} reason=missing peer certificate", addr, id);
             throw std::runtime_error("Client certificate is missing");
         }
 
@@ -451,7 +400,6 @@ asio::awaitable<void> ServerManager::async_authorize(std::shared_ptr<asio::ssl::
                     BIO_free(cert_bio);
                 }
                 X509_free(peer_cert);
-                spdlog::error("Authorization rejected: peer={} id={} reason=failed to serialize peer certificate", addr, id);
                 throw std::runtime_error("Failed to serialize client certificate");
             }
 
@@ -468,12 +416,7 @@ asio::awaitable<void> ServerManager::async_authorize(std::shared_ptr<asio::ssl::
         //  Check authorization
         if (auto shared_data = data_servers.lock())
         {
-            std::string auth_reason;
-            const bool cert_ok = shared_data->authorize_id(id, peer_cert_pem, &auth_reason);
-            const bool already_online = server_online(id);
-            const bool enabled = shared_data->is_enabled(id);
-
-            if (cert_ok && !already_online && enabled) {
+            if (shared_data->authorize_id(id, peer_cert_pem) && !server_online(id)) {
 
                 auto p = shared_data->get_ports_by_id(id);
                 auto server = std::make_shared<GrayServer>(
@@ -488,29 +431,22 @@ asio::awaitable<void> ServerManager::async_authorize(std::shared_ptr<asio::ssl::
                 // Add to manager and start
                 self->add(server);
                 server->start();
+                
 
-                spdlog::info("GrayServer authorized: peer={} id={} client_port={} data_port={} pool_size={}",
-                             addr, id, p, data_port, pool_size);
+				spdlog::info("GrayServer {} authorized and started with pool size {}", id, pool_size);
             }
             else {
-                std::string rejection_reason = auth_reason;
-                if (!cert_ok) rejection_reason = auth_reason.empty() ? "certificate not accepted" : auth_reason;
-                else if (already_online) rejection_reason = "already online";
-                else if (!enabled) rejection_reason = "disabled";
-                spdlog::error("Authorization rejected: peer={} id={} cert_ok={} already_online={} enabled={} reason={}",
-                    addr, id, cert_ok, already_online, enabled, rejection_reason);
-                throw std::runtime_error("Authorization rejected: " + rejection_reason);
+                throw std::runtime_error("Certificate mismatch or unknown server ID");
             }
 
         }
         else {
-            spdlog::error("Authorization rejected: peer={} id={} reason=DataServers unavailable", addr, id);
             throw std::runtime_error("DataServers instance no longer exists");
         }
 
     }
     catch (const std::exception& e) {
-        spdlog::error("Authorization error: peer={} id={} reason={}", addr, id, e.what());
+        spdlog::error("Authorization error: {}", e.what());
         asio::error_code ec;
         ssl_sock->lowest_layer().shutdown(tcp::socket::shutdown_both, ec);
         ssl_sock->lowest_layer().close(ec);

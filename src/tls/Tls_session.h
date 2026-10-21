@@ -11,8 +11,6 @@
 #include <openssl/pem.h>
 #include <openssl/x509.h>
 #include <openssl/evp.h>
-#include <openssl/ec.h>
-#include <openssl/sha.h>
 #include <openssl/bn.h>
 #include <openssl/bio.h>
 
@@ -20,7 +18,3 @@
 std::pair<std::string, std::string> generate_self_signed_cert_pem();
 bool load_cert_and_key_into_context(asio::ssl::context& ctx, const std::string& cert_pem, const std::string& key_pem);
 bool generate_self_signed_cert_files(const std::string& cert_path, const std::string& key_path);
-
-// SHA-256 fingerprint of a PEM-encoded certificate (DER, uppercase hex with colons).
-// Returns empty string if the certificate cannot be parsed.
-std::string certificate_fingerprint(const std::string& cert_pem);

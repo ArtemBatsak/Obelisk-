@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <string>
 #include <vector>
 #include <array>
@@ -25,9 +25,6 @@ struct Server_struct {
 	uint64_t total_traffic = 0;
 	uint64_t this_session_traffic = 0;
     std::string certificate = "";
-    std::string certificate_fingerprint = ""; // SHA-256 DER fingerprint; used for auth
-    std::string user_id = "";       // стабильный внешний ключ (игрок Kenny)
-    bool enabled = false;           // гейт на подключение Phantom (hosting разрешён?)
     std::string to_string() const;
     static Server_struct from_string(const std::string& line);
 };
@@ -44,10 +41,6 @@ private:
     void read_ports();
     int gen_id();
     bool is_port_available(int port);
-    bool port_assigned_locked(int port) const;
-    size_t strip_assigned_ports_locked();
-    int take_free_port_locked();
-    void warn_shared_ports_locked() const;
 public:
     ~DataServers() {
         {
@@ -80,8 +73,7 @@ public:
     bool updateServerTraffic(uint32_t id, uint64_t this_session_traffic);
     void calculate_total_traffic(uint32_t id);
 
-    bool authorize_id(uint32_t id, const std::string& certificate_pem = "",
-                      std::string* out_reason = nullptr) const;
+    bool authorize_id(uint32_t id, const std::string& certificate_pem = "") const;
     int get_ports_by_id(uint32_t search_id) const;
     std::vector<Server_struct>  get_servers();
 	bool add_ports(int first, int second = 0);
@@ -89,16 +81,6 @@ public:
 	std::string get_port_pool() const;
 	uint64_t get_total_traffic_by_id(uint32_t id) const;
     bool read_server_config_file(uint32_t id, std::string& content) const;
-
-    // --- Kenny multiplay helpers ---
-    bool create_user(const std::string& user_id, const std::string& comment, int requested_port,
-                     int control_port, const std::string& server_ip,
-                     const std::string& trusted_server_certificate, int max_sessions,
-                     Server_struct& out, bool& exists);
-    bool get_by_user_id(const std::string& user_id, Server_struct& out) const;
-    bool set_enabled(uint32_t id, bool enabled);
-    bool is_enabled(uint32_t id) const;
-    size_t count() const;
 };
 
 uint32_t get_random(unsigned int min, unsigned int max);

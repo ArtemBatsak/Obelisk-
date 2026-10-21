@@ -4,27 +4,6 @@
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
-#include <cstdlib>
-#include <string>
-#include <cctype>
-
-namespace {
-spdlog::level::level_enum env_level(const char* name, spdlog::level::level_enum def) {
-    const char* v = std::getenv(name);
-    if (!v || !v[0]) return def;
-    std::string s(v);
-    for (auto& c : s) c = static_cast<char>(std::tolower(c));
-    if (s == "trace") return spdlog::level::trace;
-    if (s == "debug") return spdlog::level::debug;
-    if (s == "info") return spdlog::level::info;
-    if (s == "warn") return spdlog::level::warn;
-    if (s == "warning") return spdlog::level::warn;
-    if (s == "err" || s == "error") return spdlog::level::err;
-    if (s == "critical" || s == "fatal") return spdlog::level::critical;
-    if (s == "off") return spdlog::level::off;
-    return def;
-}
-}
 
 void init_logging()
 {
@@ -50,11 +29,10 @@ void init_logging()
 		spdlog::warn("Failed to open log file '{}': {}. Console-only logging.", Path::LogFile(), e.what());
 	}
 
-    const auto level = env_level("OBELISK_LOG_LEVEL", spdlog::level::info);
-    console_sink->set_level(level);
+    console_sink->set_level(spdlog::level::info);
 
     auto logger = std::make_shared<spdlog::logger>("obelisk", sinks.begin(), sinks.end());
-    logger->set_level(level);
+    logger->set_level(spdlog::level::info);
     logger->set_pattern("[%d.%m.%Y %H:%M:%S.%e] [%l] %v");
     logger->flush_on(spdlog::level::info);
 

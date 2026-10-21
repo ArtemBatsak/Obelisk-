@@ -9,9 +9,6 @@ std::string Server_struct::to_string() const {
     j["total_traffic"] = total_traffic;
 	j["this_session_traffic"] = this_session_traffic;
     j["certificate"] = certificate;
-    j["certificate_fingerprint"] = certificate_fingerprint;
-    j["user_id"] = user_id;
-    j["enabled"] = enabled;
     return j.dump();
 }
 
@@ -25,9 +22,6 @@ Server_struct Server_struct::from_string(const std::string& line) {
     entry.total_traffic = j.value("total_traffic", uint64_t{ 0 });
 	entry.this_session_traffic = j.value("this_session_traffic", uint64_t{ 0 });
     entry.certificate = j.value("certificate", std::string(""));
-    entry.certificate_fingerprint = j.value("certificate_fingerprint", std::string(""));
-    entry.user_id = j.value("user_id", std::string(""));
-    entry.enabled = j.value("enabled", false);
 
     return entry;
 }
@@ -36,12 +30,6 @@ DataServers::DataServers() {
     std::srand(static_cast<unsigned int>(std::time(nullptr)));
     read_id();
     read_ports();
-    std::lock_guard<std::mutex> lock(mtx_);
-    warn_shared_ports_locked();
-    if (strip_assigned_ports_locked() > 0) {
-        spdlog::warn("Assigned client ports were sitting in the free pool; reserved them again");
-        save_all();
-    }
 }
 
 void DataServers::ensure_file() {
@@ -93,19 +81,6 @@ void DataServers::read_id() {
                 spdlog::error("Error parsing line: {}", line);
             }
         }
-    }
-
-    // Migration: older records may not have a certificate fingerprint.
-    // Compute it once from the stored PEM so authorization uses fingerprints.
-    bool migrated = false;
-    for (auto& s : servers_id) {
-        if (s.certificate_fingerprint.empty() && !s.certificate.empty()) {
-            s.certificate_fingerprint = certificate_fingerprint(s.certificate);
-            if (!s.certificate_fingerprint.empty()) migrated = true;
-        }
-    }
-    if (migrated) {
-        spdlog::info("Computed missing certificate fingerprints for existing servers");
     }
 }
 
@@ -231,10 +206,19 @@ bool DataServers::add_id(const std::string comment_, int control_port, const std
         return false;
     }
 
-    selected_port = take_free_port_locked();
+    auto it = ports.begin();
+    while (it != ports.end()) {
+        int candidate = *it;
+
+        it = ports.erase(it);
+
+        if (is_port_available(candidate)) {
+            selected_port = candidate;
+            break;
+        }
+    }
 
     if (selected_port == -1) {
-        save_all();
         spdlog::error("No available ports in pool for new server");
         return false;
     }
@@ -247,9 +231,8 @@ bool DataServers::add_id(const std::string comment_, int control_port, const std
 
     auto pem = generate_self_signed_cert_pem();
     entry.certificate = pem.second;
-    entry.certificate_fingerprint = certificate_fingerprint(entry.certificate);
 
-    if (entry.certificate.empty() || pem.first.empty() || entry.certificate_fingerprint.empty()) {
+    if (entry.certificate.empty() || pem.first.empty()) {
         spdlog::error("Error: failed to generate certificate for server {}", new_id);
         ports.insert(selected_port);
         return false;
@@ -292,39 +275,22 @@ void DataServers::save_all() {
     spdlog::info("Servers and ports state saved.");
 }
 
-bool DataServers::authorize_id(uint32_t id, const std::string& certificate_pem,
-                               std::string* out_reason) const {
+bool DataServers::authorize_id(uint32_t id, const std::string& certificate_pem) const {
     std::lock_guard<std::mutex> lock(mtx_);
     for (const auto& s : servers_id) {
-        if (s.id != id) continue;
-
-        if (certificate_pem.empty()) {
-            if (out_reason) *out_reason = "missing peer certificate";
-            spdlog::warn("authorize_id: id={} missing peer certificate", id);
-            return false;
+        if (s.id == id) {
+            if (!certificate_pem.empty()) {
+                // Debug logging
+                if (s.certificate != certificate_pem) {
+                    spdlog::error("Certificate mismatch for ID {}", id);
+                    spdlog::debug("Expected: {}", s.certificate);
+                    spdlog::debug("Received: {}", certificate_pem);
+                }
+                return s.certificate == certificate_pem;
+            }
+            return true;
         }
-
-        const std::string stored_fp = s.certificate_fingerprint.empty()
-            ? certificate_fingerprint(s.certificate)
-            : s.certificate_fingerprint;
-        const std::string peer_fp = certificate_fingerprint(certificate_pem);
-
-        if (stored_fp.empty() || peer_fp.empty()) {
-            if (out_reason) *out_reason = "cannot compute certificate fingerprint";
-            spdlog::error("authorize_id: id={} cannot compute certificate fingerprint", id);
-            return false;
-        }
-
-        if (stored_fp != peer_fp) {
-            if (out_reason) *out_reason = "certificate fingerprint mismatch";
-            spdlog::error("authorize_id: id={} certificate fingerprint mismatch stored={} peer={}",
-                          id, stored_fp, peer_fp);
-            return false;
-        }
-        return true;
     }
-    if (out_reason) *out_reason = "unknown server id";
-    spdlog::warn("authorize_id: unknown id={}", id);
     return false;
 }
 
@@ -359,9 +325,7 @@ bool DataServers::add_ports(int first, int second) {
     {
         std::lock_guard<std::mutex> lock(mtx_);
         for (int i = start; i <= end; ++i) {
-            if (port_assigned_locked(i)) {
-                continue;
-            }
+
             auto result = ports.insert(i);
             if (result.second) {
                 changed = true;
@@ -370,9 +334,7 @@ bool DataServers::add_ports(int first, int second) {
                 spdlog::debug("Port {} already exists in the pool", i);
             }
         }
-        if (strip_assigned_ports_locked() > 0) {
-            changed = true;
-        }
+
 
         if (changed) {
             save_all();
@@ -413,58 +375,6 @@ bool DataServers::delete_port(int first, int second) {
 
 	spdlog::warn("No ports from {} to {} were found in the pool.", start, end);
     return false; 
-}
-
-bool DataServers::port_assigned_locked(int port) const {
-    if (port <= 0) return false;
-    for (const auto& s : servers_id) {
-        if (s.client_port == port) return true;
-    }
-    return false;
-}
-
-size_t DataServers::strip_assigned_ports_locked() {
-    size_t removed = 0;
-    for (const auto& s : servers_id) {
-        if (s.client_port > 0 && ports.erase(s.client_port) > 0) {
-            ++removed;
-        }
-    }
-    return removed;
-}
-
-int DataServers::take_free_port_locked() {
-    auto it = ports.begin();
-    while (it != ports.end()) {
-        int candidate = *it;
-        if (port_assigned_locked(candidate)) {
-            it = ports.erase(it);
-            spdlog::warn("Port {} is already bound to an account and stays reserved", candidate);
-            continue;
-        }
-        it = ports.erase(it);
-        if (is_port_available(candidate)) {
-            return candidate;
-        }
-    }
-    return -1;
-}
-
-void DataServers::warn_shared_ports_locked() const {
-    for (size_t i = 0; i < servers_id.size(); ++i) {
-        const int port = servers_id[i].client_port;
-        if (port <= 0) continue;
-        bool earlier = false;
-        int shares = 0;
-        for (size_t j = 0; j < servers_id.size(); ++j) {
-            if (servers_id[j].client_port != port) continue;
-            ++shares;
-            if (j < i) earlier = true;
-        }
-        if (shares > 1 && !earlier) {
-            spdlog::error("client_port {} is assigned to {} accounts", port, shares);
-        }
-    }
 }
 
 bool DataServers::is_port_available(int port) {
@@ -556,135 +466,5 @@ bool DataServers::read_server_config_file(uint32_t id, std::string& content) con
 
     content.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     return !content.empty();
-}
-
-// ---------------- Kenny multiplay ----------------
-
-bool DataServers::create_user(const std::string& user_id, const std::string& comment,
-                              int requested_port, int control_port, const std::string& server_ip,
-                              const std::string& trusted_server_certificate, int max_sessions,
-                              Server_struct& out, bool& exists) {
-    std::lock_guard<std::mutex> lock(mtx_);
-
-    exists = false;
-    if (user_id.empty()) {
-        spdlog::error("create_user: empty user_id");
-        return false;
-    }
-
-    // Один user_id — одна запись и её порт. Повторный вызов порт не меняет.
-    for (const auto& s : servers_id) {
-        if (s.user_id == user_id) {
-            out = s;
-            exists = true;
-            if (s.client_port > 0 && ports.erase(s.client_port) > 0) {
-                spdlog::warn("create_user: port {} of user {} was free; reserved again", s.client_port, user_id);
-                save_all();
-            }
-            return true;
-        }
-    }
-
-    if (max_sessions > 0 && static_cast<int>(servers_id.size()) >= max_sessions) {
-        spdlog::error("create_user: max_sessions ({}) reached", max_sessions);
-        return false;
-    }
-
-    // Порт только из пула и только если он ни за кем не закреплён.
-    int selected_port = -1;
-    if (requested_port > 0) {
-        if (port_assigned_locked(requested_port)) {
-            spdlog::error("create_user: requested_port {} is already bound to an account", requested_port);
-            return false;
-        }
-        auto it = ports.find(requested_port);
-        if (it != ports.end() && is_port_available(requested_port)) {
-            selected_port = requested_port;
-            ports.erase(it);
-        }
-        else {
-            spdlog::error("create_user: requested_port {} not available in pool", requested_port);
-            return false;
-        }
-    }
-    else {
-        selected_port = take_free_port_locked();
-        if (selected_port == -1) {
-            spdlog::error("create_user: no available ports in pool");
-            save_all();
-            return false;
-        }
-    }
-
-    int new_id = gen_id();
-    Server_struct entry;
-    entry.id = static_cast<uint32_t>(new_id);
-    entry.client_port = selected_port;
-    entry.comment = comment.empty() ? user_id : comment;
-    entry.user_id = user_id;
-    entry.enabled = false;
-
-    auto pem = generate_self_signed_cert_pem();
-    entry.certificate = pem.second;
-    entry.certificate_fingerprint = certificate_fingerprint(entry.certificate);
-    if (entry.certificate.empty() || pem.first.empty() || entry.certificate_fingerprint.empty()) {
-        spdlog::error("create_user: failed to generate certificate for {}", new_id);
-        ports.insert(selected_port);
-        return false;
-    }
-
-    servers_id.push_back(entry);
-    if (!write_server_config_file(entry, control_port, server_ip, pem.first, trusted_server_certificate)) {
-        servers_id.pop_back();
-        ports.insert(selected_port);
-        return false;
-    }
-    save_all();
-    spdlog::info("create_user: user_id={} id={} client_port={}", user_id, new_id, selected_port);
-
-    out = entry;
-    return true;
-}
-
-bool DataServers::get_by_user_id(const std::string& user_id, Server_struct& out) const {
-    std::lock_guard<std::mutex> lock(mtx_);
-    for (const auto& s : servers_id) {
-        if (s.user_id == user_id) {
-            out = s;
-            return true;
-        }
-    }
-    return false;
-}
-
-bool DataServers::set_enabled(uint32_t id, bool enabled) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    for (auto& s : servers_id) {
-        if (s.id == id) {
-            if (s.enabled != enabled) {
-                s.enabled = enabled;
-                save_all(); // персистим сразу, чтобы переживать рестарт
-                spdlog::info("set_enabled: id={} -> {}", id, enabled);
-            }
-            return true;
-        }
-    }
-    spdlog::error("set_enabled: id {} not found", id);
-    return false;
-}
-
-bool DataServers::is_enabled(uint32_t id) const {
-    std::lock_guard<std::mutex> lock(mtx_);
-    for (const auto& s : servers_id) {
-        if (s.id == id) {
-            return s.enabled;
-        }
-    }
-    return false;
-}
-
-size_t DataServers::count() const {
-    std::lock_guard<std::mutex> lock(mtx_);
-    return servers_id.size();
 }
 
