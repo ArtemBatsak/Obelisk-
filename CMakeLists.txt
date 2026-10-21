@@ -107,3 +107,13 @@ target_link_libraries(Obelisk_tests
 
 include(GoogleTest)
 gtest_discover_tests(Obelisk_tests)
+
+# ------------------ Install ------------------
+include(GNUInstallDirs)
+install(TARGETS ${PROJECT_NAME}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+install(FILES packaging/obelisk.service
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/systemd/system
+    OPTIONAL
+)

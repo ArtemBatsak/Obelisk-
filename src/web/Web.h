@@ -1,5 +1,7 @@
 #pragma once
 
+#include <chrono>
+#include <thread>   // для shutdown задержки при рестарте
 
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <httplib.h>
@@ -54,10 +56,12 @@ private:
     std::string tls_cert_path;
     std::string tls_key_path;
     std::unique_ptr<httplib::SSLServer> svr;
+    std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
 
     void apply_auth_middleware();
     void setup_tls_in_memory();
-    std::string detect_external_ip() const;
+    std::string detect_external_ip();
+    std::string public_ip_cache_;
 };
 
 
@@ -111,6 +115,12 @@ static const std::string INDEX_HTML_PART_1 = R"raw(
         input { width: 100%; padding: 10px; margin: 15px 0; background: #252525; border: 1px solid #444; color: white; border-radius: 4px; box-sizing: border-box; }
         .port-range-inputs { display: flex; align-items: center; gap: 10px; }
         .port-pool-view { background: #000; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 13px; max-height: 150px; overflow-y: auto; margin: 10px 0; border: 1px solid #333; color: var(--success); }
+        .monitor { max-width: 900px; margin: 15px auto 0; padding: 15px; background: var(--bg-panel); border: 1px solid #2a2a2a; border-radius: 8px; }
+        .monitor-title { font-size: 16px; font-weight: bold; color: var(--accent); margin-bottom: 12px; }
+        .monitor-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+        .mon-cell { background: #141414; border: 1px solid #2a2a2a; border-radius: 6px; padding: 10px; }
+        .mon-label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
+        .mon-val { font-size: 18px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
     </style>
 </head>
 <body>
@@ -121,6 +131,21 @@ static const std::string INDEX_HTML_PART_1 = R"raw(
         <button class="btn-icon manage-btn" onclick="openManageModal()" title="Manage System">⚙️</button>
     </div>
 </header>
+<div class="monitor" id="monitorPanel">
+    <div class="monitor-title">📡 Мониторинг</div>
+    <div class="monitor-grid">
+        <div class="mon-cell"><span class="mon-label">Онлайн сейчас</span><span class="mon-val" id="mon-online">-</span></div>
+        <div class="mon-cell"><span class="mon-label">Активные пары</span><span class="mon-val" id="mon-pairs">-</span></div>
+        <div class="mon-cell"><span class="mon-label">Скорость ↓</span><span class="mon-val" id="mon-in">-</span></div>
+        <div class="mon-cell"><span class="mon-label">Скорость ↑</span><span class="mon-val" id="mon-out">-</span></div>
+        <div class="mon-cell"><span class="mon-label">Трафик</span><span class="mon-val" id="mon-traffic">-</span></div>
+        <div class="mon-cell"><span class="mon-label">Свободных портов</span><span class="mon-val" id="mon-ports">-</span></div>
+        <div class="mon-cell"><span class="mon-label">Записей</span><span class="mon-val" id="mon-users">-</span></div>
+        <div class="mon-cell"><span class="mon-label">Уникальных портов</span><span class="mon-val" id="mon-unique">-</span></div>
+        <div class="mon-cell"><span class="mon-label">Узел</span><span class="mon-val" id="mon-node">-</span></div>
+        <div class="mon-cell"><span class="mon-label">Аптайм процесса</span><span class="mon-val" id="mon-uptime">-</span></div>
+    </div>
+</div>
 <div class="container" id="servers"></div>
 <div class="modal" id="manageModal">
     <div class="modal-content">
@@ -326,6 +351,37 @@ function formatBytes(bytes, decimals = 2) {
 
 setInterval(loadServers, 1000);
 loadServers();
+
+async function loadMonitor() {
+    try {
+        const data = await api("/api/monitor");
+        if (!data || data.status === "error") return;
+        setText("mon-online", (data.online_servers ?? "-") + "");
+        setText("mon-pairs", (data.active_pairs ?? "-") + "");
+        setText("mon-in", formatBytes(data.speed_in) + "/s");
+        setText("mon-out", formatBytes(data.speed_out) + "/s");
+        setText("mon-traffic", formatBytes(data.total_traffic));
+        setText("mon-ports", (data.free_ports ?? "-") + "");
+        setText("mon-users", (data.users ?? "-") + "");
+        setText("mon-unique", (data.unique_ports ?? "-") + "");
+        setText("mon-node", data.node_id || "-");
+        setText("mon-uptime", formatUptime(data.uptime_sec));
+    } catch (e) {}
+}
+function setText(id, value) {
+    const el = document.getElementById(id);
+    if (el && el.textContent !== String(value)) el.textContent = value;
+}
+function formatUptime(sec) {
+    if (sec === undefined || sec === null) return "-";
+    const d = Math.floor(sec / 86400);
+    const h = Math.floor((sec % 86400) / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = Math.floor(sec % 60);
+    return (d > 0 ? d + "д " : "") + (h > 0 ? h + "ч " : "") + (m > 0 ? m + "м " : "") + s + "с";
+}
+setInterval(loadMonitor, 1000);
+loadMonitor();
 </script>
 </body>
 </html>

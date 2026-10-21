@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "manager/Server_manager.h"
 #include <asio.hpp>
 #include <asio/ts/internet.hpp>
@@ -16,6 +16,7 @@
 #include <functional>
 #include <chrono>
 #include <optional>
+#include <deque>
 #include <string>
 #ifdef _WIN32
 #include <winsock2.h>
@@ -85,7 +86,7 @@ class GrayServer : public std::enable_shared_from_this<GrayServer> {
     std::optional<asio::ip::address> allowed_data_ip_;
 
     static constexpr std::chrono::seconds otp_ttl_{30};
-    static constexpr std::chrono::seconds pending_idle_timeout_{60};
+    static constexpr std::chrono::seconds pending_idle_timeout_{300};
     static constexpr int max_pool_size_ = 64;
 
     uint32_t generate_otp();
@@ -126,12 +127,26 @@ class GrayServer : public std::enable_shared_from_this<GrayServer> {
 
     int ping_interval_sec;
     int ping_timeout_sec;
+    int ping_misses_ = 0;
+    bool pong_abandoned_ = false;
+    static constexpr int kPingMissLimit = 3;
+
+    // --- Сериализация записей в control-сокет ---
+    // asio не допускает перекрывающихся async_write на одном потоке: ping (type 1)
+    // и OTP (type 2) могут накладываться. Очередь + флаг отправляют по одному пакету.
+    struct ControlTxItem {
+        std::shared_ptr<Packet> pkt;
+        std::function<void(const asio::error_code&)> handler;
+    };
+    std::deque<ControlTxItem> control_tx_queue_;
+    bool control_write_in_flight_ = false;
 
     void send_ping();
     void wait_pong();
     void schedule_ping();
     void send_control_packet(uint32_t type, uint32_t value,
         std::function<void(const asio::error_code&)> handler = nullptr);
+    void flush_control_write();
 
     asio::steady_timer speed_monitor_timer;
 
@@ -148,6 +163,7 @@ class GrayServer : public std::enable_shared_from_this<GrayServer> {
     static constexpr std::size_t BuffSize = 64 * 1024;
 
     void enable_keepalive(std::shared_ptr<asio::ip::tcp::socket> sock);
+    void clamp_mss(std::shared_ptr<asio::ip::tcp::socket> sock);
 
 public:
     GrayServer(int server_id,
@@ -164,10 +180,10 @@ public:
         data_port(data_port),
         client_port(client_port),
         pool_size(std::clamp(pool_size, 1, max_pool_size_)),
-        max_pending_clients(std::max(1, max_pending_clients)),
+        max_pending_clients((std::max)(1, max_pending_clients)),
         manager_(manager),
         ping_interval_sec(5),
-        ping_timeout_sec(3),
+        ping_timeout_sec(15),
         ping_timer(io),
         pong_timer(io),
         data_pool_timer(io),
