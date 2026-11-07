@@ -1,0 +1,690 @@
+#include "manager/Data.h"
+#include "tls/Tls_session.h"
+// ---------------- Server_struct ----------------
+std::string Server_struct::to_string() const {
+    nlohmann::json j;
+    j["id"] = id;
+    j["client_port"] = client_port;
+    j["comment"] = comment;
+    j["total_traffic"] = total_traffic;
+	j["this_session_traffic"] = this_session_traffic;
+    j["certificate"] = certificate;
+    j["certificate_fingerprint"] = certificate_fingerprint;
+    j["user_id"] = user_id;
+    j["enabled"] = enabled;
+    return j.dump();
+}
+
+Server_struct Server_struct::from_string(const std::string& line) {
+    Server_struct entry;
+    auto j = nlohmann::json::parse(line);
+
+    entry.id = j.value("id", 0);
+    entry.client_port = j.value("client_port", 0);
+    entry.comment = j.value("comment", std::string("0"));
+    entry.total_traffic = j.value("total_traffic", uint64_t{ 0 });
+	entry.this_session_traffic = j.value("this_session_traffic", uint64_t{ 0 });
+    entry.certificate = j.value("certificate", std::string(""));
+    entry.certificate_fingerprint = j.value("certificate_fingerprint", std::string(""));
+    entry.user_id = j.value("user_id", std::string(""));
+    entry.enabled = j.value("enabled", false);
+
+    return entry;
+}
+// ---------------- DataServers ----------------
+DataServers::DataServers() {
+    std::srand(static_cast<unsigned int>(std::time(nullptr)));
+    read_id();
+    read_ports();
+    std::lock_guard<std::mutex> lock(mtx_);
+    warn_shared_ports_locked();
+    if (strip_assigned_ports_locked() > 0) {
+        spdlog::warn("Assigned client ports were sitting in the free pool; reserved them again");
+        save_all();
+    }
+}
+
+void DataServers::ensure_file() {
+    Path::EnsureDataFiles();
+    std::filesystem::create_directories(Path::DataConfigsDirPath());
+}
+
+std::filesystem::path DataServers::get_server_config_path(uint32_t id) const {
+    return Path::DataConfigsDirPath() / ("server_" + std::to_string(id) + ".json");
+}
+
+bool DataServers::write_server_config_file(const Server_struct& entry, int control_port, const std::string& server_ip, const std::string& private_key, const std::string& trusted_server_certificate) {
+    nlohmann::json config_json;
+    config_json["CONTROL_PORT"] = control_port;
+    config_json["ID_CLIENT"] = entry.id;
+    config_json["LOCAL_IP"] = "127.0.0.1";
+    config_json["LOCAL_PORT"] = "";
+    config_json["POOL_SIZE"] = 10;
+    config_json["SERVER_IP"] = server_ip;
+    config_json["CERTIFICATE"] = entry.certificate;
+    config_json["PRIVATE_KEY"] = private_key;
+    config_json["TRUSTED_SERVER_CERTIFICATE"] = trusted_server_certificate;
+
+    try {
+        std::ofstream out(get_server_config_path(entry.id), std::ios::trunc);
+        out << config_json.dump(4);
+        out.close();
+        return out.good();
+    }
+    catch (const std::exception& e) {
+        spdlog::error("Failed to write config for server {}: {}", entry.id, e.what());
+        return false;
+    }
+}
+
+void DataServers::read_id() {
+    std::lock_guard<std::mutex> lock(mtx_);
+    servers_id.clear();
+    std::ifstream infile(Path::DataServersFilePath().string());
+    if (!infile.is_open()) return;
+
+    std::string line;
+    while (std::getline(infile, line)) {
+        if (!line.empty()) {
+            try {
+                servers_id.push_back(Server_struct::from_string(line));
+            }
+            catch (...) {
+                spdlog::error("Error parsing line: {}", line);
+            }
+        }
+    }
+
+    // Migration: older records may not have a certificate fingerprint.
+    // Compute it once from the stored PEM so authorization uses fingerprints.
+    bool migrated = false;
+    for (auto& s : servers_id) {
+        if (s.certificate_fingerprint.empty() && !s.certificate.empty()) {
+            s.certificate_fingerprint = certificate_fingerprint(s.certificate);
+            if (!s.certificate_fingerprint.empty()) migrated = true;
+        }
+    }
+    if (migrated) {
+        spdlog::info("Computed missing certificate fingerprints for existing servers");
+    }
+}
+
+void DataServers::read_ports() {
+    std::lock_guard<std::mutex> lock(mtx_);
+
+    std::ifstream infile(Path::DataPortsFilePath().string());
+    if (!infile) {
+        return;
+    }
+
+    ports.clear();
+
+    int port;
+    while (infile >> port) {
+        ports.insert(port);
+    }
+}
+
+int DataServers::gen_id() {
+    int new_id;
+    bool exists;
+    do {
+		// Generate a random 7-digit ID
+		// Must be careful, because get_random give uint32_t and if we cast it to int, it can be negative, so we need to take care of that
+        new_id = static_cast<int>(get_random(1000000, 9999999));
+        exists = false;
+        for (const auto& s : servers_id) {
+            if (s.id == new_id) {
+                exists = true;
+                break;
+            }
+        }
+    } while (exists);
+    return new_id;
+}
+
+bool DataServers::deleteServerById(uint32_t id)
+{ 	
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (auto it = servers_id.begin(); it != servers_id.end(); ++it) {
+        if (it->id == id) {
+            const auto config_path = get_server_config_path(id);
+            std::error_code fs_ec;
+            if (std::filesystem::exists(config_path, fs_ec)) {
+                std::filesystem::remove(config_path, fs_ec);
+                if (fs_ec) {
+                    spdlog::warn("Failed to remove config file for server {}: {}", id, fs_ec.message());
+                }
+            }
+            ports.insert(it->client_port);
+            servers_id.erase(it);
+			save_all();
+			return true;
+        }
+    }
+	spdlog::error("Error: server with ID {} not found!", id);
+	return false;
+}
+
+bool DataServers::updateServerComment(uint32_t id, const std::string& new_comment)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+	bool found = false;
+    for (auto& s : servers_id) {
+        if (s.id == id) {
+            s.comment = new_comment;
+            found = true;
+        }
+    }
+    if (found)
+    {
+        save_all();
+        spdlog::info("Server with ID {} comment updated.", id);
+		return true;
+    }
+    else
+    {
+		spdlog::error("Error: server with ID {} not found!", id);   
+		return false;
+    }
+}
+
+bool DataServers::updateServerTraffic(uint32_t id, uint64_t this_session_traffic)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    bool found = false;
+    for (auto& s : servers_id) {
+        if (s.id == id) {
+            s.this_session_traffic = this_session_traffic;
+            found = true;
+            break;
+        }
+    }
+
+    if (found) {
+        
+        return true;
+    }
+
+    spdlog::warn("Server {} not found while saving traffic", id);
+    return false;
+}
+
+void DataServers::calculate_total_traffic(uint32_t id) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (auto& s : servers_id) {
+        if (s.id == id) {
+            s.total_traffic += s.this_session_traffic;
+            s.this_session_traffic = 0;
+            break;
+        }
+    }
+}
+
+bool DataServers::add_id(const std::string comment_, int control_port, const std::string& server_ip, const std::string& trusted_server_certificate) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    int selected_port = -1;
+    int new_id;
+
+    if (ports.size() < 1) {
+        spdlog::error("Error: not enough free ports available for a new server!");
+        return false;
+    }
+
+    selected_port = take_free_port_locked();
+
+    if (selected_port == -1) {
+        save_all();
+        spdlog::error("No available ports in pool for new server");
+        return false;
+    }
+
+    new_id = gen_id();
+    Server_struct entry;
+    entry.id = new_id;
+    entry.client_port = selected_port;
+    entry.comment = comment_;
+
+    auto pem = generate_self_signed_cert_pem();
+    entry.certificate = pem.second;
+    entry.certificate_fingerprint = certificate_fingerprint(entry.certificate);
+
+    if (entry.certificate.empty() || pem.first.empty() || entry.certificate_fingerprint.empty()) {
+        spdlog::error("Error: failed to generate certificate for server {}", new_id);
+        ports.insert(selected_port);
+        return false;
+    }
+
+    servers_id.push_back(entry);
+    if (!write_server_config_file(entry, control_port, server_ip, pem.first, trusted_server_certificate)) {
+        servers_id.pop_back();
+        ports.insert(selected_port);
+        return false;
+    }
+    save_all();
+
+    spdlog::info("Server created with ID {}, client_port={}", new_id, selected_port);
+
+    return true;
+}
+
+void DataServers::save_all() {
+    std::ofstream outfile_id(Path::DataServersFilePath().string(), std::ios::trunc);
+    if (!outfile_id.is_open()) {
+        spdlog::error("Error: cannot open {} for writing!", Path::DataServersFilePath().string());
+    }
+    else {
+        for (const auto& entry : servers_id) {
+            outfile_id << entry.to_string() << "\n";
+        }
+    }
+
+
+    std::ofstream outfile_port(Path::DataPortsFilePath().string(), std::ios::trunc);
+    if (!outfile_port.is_open()) {
+        spdlog::error("Error: cannot open {} for writing!", Path::DataPortsFilePath().string());
+    }
+    else {
+        for (int port : ports) {
+            outfile_port << port << "\n";
+        }
+    }
+    spdlog::info("Servers and ports state saved.");
+}
+
+bool DataServers::authorize_id(uint32_t id, const std::string& certificate_pem,
+                               std::string* out_reason) const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (const auto& s : servers_id) {
+        if (s.id != id) continue;
+
+        if (certificate_pem.empty()) {
+            if (out_reason) *out_reason = "missing peer certificate";
+            spdlog::warn("authorize_id: id={} missing peer certificate", id);
+            return false;
+        }
+
+        const std::string stored_fp = s.certificate_fingerprint.empty()
+            ? certificate_fingerprint(s.certificate)
+            : s.certificate_fingerprint;
+        const std::string peer_fp = certificate_fingerprint(certificate_pem);
+
+        if (stored_fp.empty() || peer_fp.empty()) {
+            if (out_reason) *out_reason = "cannot compute certificate fingerprint";
+            spdlog::error("authorize_id: id={} cannot compute certificate fingerprint", id);
+            return false;
+        }
+
+        if (stored_fp != peer_fp) {
+            if (out_reason) *out_reason = "certificate fingerprint mismatch";
+            spdlog::error("authorize_id: id={} certificate fingerprint mismatch stored={} peer={}",
+                          id, stored_fp, peer_fp);
+            return false;
+        }
+        return true;
+    }
+    if (out_reason) *out_reason = "unknown server id";
+    spdlog::warn("authorize_id: unknown id={}", id);
+    return false;
+}
+
+int DataServers::get_ports_by_id(uint32_t search_id) const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (const auto& s : servers_id) {
+        if (s.id == search_id) {
+            
+            return s.client_port;
+        }
+    }
+    throw std::runtime_error("ID not found");
+}
+
+std::vector<Server_struct> DataServers::get_servers()  {
+	std::lock_guard<std::mutex> lock(mtx_);
+	return servers_id;
+}
+
+bool DataServers::add_ports(int first, int second) {
+    bool changed = false;
+    int start = first;
+    int end = (second == 0) ? first : second;
+    if (start > end) std::swap(start, end);
+
+
+    if (start <= 1024 || end > 65535) {
+        spdlog::warn("Range {}-{} is out of valid bounds", start, end);
+        return false;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        for (int i = start; i <= end; ++i) {
+            if (port_assigned_locked(i)) {
+                continue;
+            }
+            auto result = ports.insert(i);
+            if (result.second) {
+                changed = true;
+            }
+            else {
+                spdlog::debug("Port {} already exists in the pool", i);
+            }
+        }
+        if (strip_assigned_ports_locked() > 0) {
+            changed = true;
+        }
+
+        if (changed) {
+            save_all();
+            if (start == end) {
+                spdlog::info("Port {} added to the free pool.", start);
+            }
+            else {
+                spdlog::info("Ports from {} to {} added to the free pool.", start, end);
+            }
+        }
+    }
+    return true;
+}
+
+bool DataServers::delete_port(int first, int second) {
+    int start = first;
+    int end = (second == 0) ? first : second;
+    if (start > end) std::swap(start, end);
+
+    std::lock_guard<std::mutex> lock(mtx_);
+
+    size_t size_before = ports.size();
+
+    if (start == end) {
+        ports.erase(start);
+    }
+    else {
+        auto it_start = ports.lower_bound(start);
+        auto it_end = ports.upper_bound(end);
+        ports.erase(it_start, it_end);
+    }
+
+    if (ports.size() != size_before) {
+		save_all();
+        spdlog::info("Ports from {} to {} removed from pool.", start, end);
+        return true;
+    }
+
+	spdlog::warn("No ports from {} to {} were found in the pool.", start, end);
+    return false; 
+}
+
+bool DataServers::port_assigned_locked(int port) const {
+    if (port <= 0) return false;
+    for (const auto& s : servers_id) {
+        if (s.client_port == port) return true;
+    }
+    return false;
+}
+
+size_t DataServers::strip_assigned_ports_locked() {
+    size_t removed = 0;
+    for (const auto& s : servers_id) {
+        if (s.client_port > 0 && ports.erase(s.client_port) > 0) {
+            ++removed;
+        }
+    }
+    return removed;
+}
+
+int DataServers::take_free_port_locked() {
+    auto it = ports.begin();
+    while (it != ports.end()) {
+        int candidate = *it;
+        if (port_assigned_locked(candidate)) {
+            it = ports.erase(it);
+            spdlog::warn("Port {} is already bound to an account and stays reserved", candidate);
+            continue;
+        }
+        it = ports.erase(it);
+        if (is_port_available(candidate)) {
+            return candidate;
+        }
+    }
+    return -1;
+}
+
+void DataServers::warn_shared_ports_locked() const {
+    for (size_t i = 0; i < servers_id.size(); ++i) {
+        const int port = servers_id[i].client_port;
+        if (port <= 0) continue;
+        bool earlier = false;
+        int shares = 0;
+        for (size_t j = 0; j < servers_id.size(); ++j) {
+            if (servers_id[j].client_port != port) continue;
+            ++shares;
+            if (j < i) earlier = true;
+        }
+        if (shares > 1 && !earlier) {
+            spdlog::error("client_port {} is assigned to {} accounts", port, shares);
+        }
+    }
+}
+
+bool DataServers::is_port_available(int port) {
+    asio::io_context ioc; 
+    asio::ip::tcp::acceptor acceptor(ioc);
+    asio::error_code ec;
+
+    acceptor.open(asio::ip::tcp::v4(), ec);
+    if (ec) return false;
+
+    acceptor.bind({ asio::ip::tcp::v4(), static_cast<unsigned short>(port) }, ec);
+
+    return !ec;
+}
+
+std::string DataServers::get_port_pool() const {
+    std::lock_guard<std::mutex> lock(mtx_);
+
+    nlohmann::json j;
+
+    if (ports.empty()) {
+        j["status"] = "empty";
+        j["ranges"] = "";
+        return j.dump();
+    }
+
+    std::string ranges_str;
+    int start = *ports.begin();
+    int last = start;
+
+    auto add_range = [&](int s, int l) {
+        if (!ranges_str.empty()) ranges_str += ", ";
+        if (s == l) ranges_str += std::to_string(s);
+        else ranges_str += std::to_string(s) + "-" + std::to_string(l);
+        };
+
+    for (auto it = std::next(ports.begin()); it != ports.end(); ++it) {
+        if (*it != last + 1) {
+            add_range(start, last);
+            start = *it;
+        }
+        last = *it;
+    }
+    add_range(start, last);
+
+    j["status"] = "success";
+    j["count"] = ports.size();
+    j["ranges"] = ranges_str;
+
+    return j.dump();
+}
+
+uint32_t get_random(unsigned int min, unsigned int max) {
+    if (min > max) return min;
+
+    unsigned int random_val;
+
+    if (RAND_bytes(reinterpret_cast<unsigned char*>(&random_val), sizeof(random_val)) != 1) {
+        spdlog::warn("OpenSSL RAND_bytes failed, falling back to std::rand()");
+        random_val = static_cast<unsigned int>(std::rand());
+    }
+
+    unsigned int range = max - min + 1;
+
+    return min + (static_cast<uint32_t>(random_val % range));
+}
+
+uint64_t DataServers::get_total_traffic_by_id(uint32_t id) const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (const auto& s : servers_id) {
+        if (s.id == id) {
+            return s.total_traffic + s.this_session_traffic;
+        }
+    }
+    spdlog::warn("Server {} not found while getting total traffic", id);
+    return 0;
+}
+
+bool DataServers::read_server_config_file(uint32_t id, std::string& content) const {
+    auto path = get_server_config_path(id);
+    if (!std::filesystem::exists(path)) {
+        return false;
+    }
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) {
+        return false;
+    }
+
+    content.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return !content.empty();
+}
+
+// ---------------- Kenny multiplay ----------------
+
+bool DataServers::create_user(const std::string& user_id, const std::string& comment,
+                              int requested_port, int control_port, const std::string& server_ip,
+                              const std::string& trusted_server_certificate, int max_sessions,
+                              Server_struct& out, bool& exists) {
+    std::lock_guard<std::mutex> lock(mtx_);
+
+    exists = false;
+    if (user_id.empty()) {
+        spdlog::error("create_user: empty user_id");
+        return false;
+    }
+
+    // Один user_id — одна запись и её порт. Повторный вызов порт не меняет.
+    for (const auto& s : servers_id) {
+        if (s.user_id == user_id) {
+            out = s;
+            exists = true;
+            if (s.client_port > 0 && ports.erase(s.client_port) > 0) {
+                spdlog::warn("create_user: port {} of user {} was free; reserved again", s.client_port, user_id);
+                save_all();
+            }
+            return true;
+        }
+    }
+
+    if (max_sessions > 0 && static_cast<int>(servers_id.size()) >= max_sessions) {
+        spdlog::error("create_user: max_sessions ({}) reached", max_sessions);
+        return false;
+    }
+
+    // Порт только из пула и только если он ни за кем не закреплён.
+    int selected_port = -1;
+    if (requested_port > 0) {
+        if (port_assigned_locked(requested_port)) {
+            spdlog::error("create_user: requested_port {} is already bound to an account", requested_port);
+            return false;
+        }
+        auto it = ports.find(requested_port);
+        if (it != ports.end() && is_port_available(requested_port)) {
+            selected_port = requested_port;
+            ports.erase(it);
+        }
+        else {
+            spdlog::error("create_user: requested_port {} not available in pool", requested_port);
+            return false;
+        }
+    }
+    else {
+        selected_port = take_free_port_locked();
+        if (selected_port == -1) {
+            spdlog::error("create_user: no available ports in pool");
+            save_all();
+            return false;
+        }
+    }
+
+    int new_id = gen_id();
+    Server_struct entry;
+    entry.id = static_cast<uint32_t>(new_id);
+    entry.client_port = selected_port;
+    entry.comment = comment.empty() ? user_id : comment;
+    entry.user_id = user_id;
+    entry.enabled = false;
+
+    auto pem = generate_self_signed_cert_pem();
+    entry.certificate = pem.second;
+    entry.certificate_fingerprint = certificate_fingerprint(entry.certificate);
+    if (entry.certificate.empty() || pem.first.empty() || entry.certificate_fingerprint.empty()) {
+        spdlog::error("create_user: failed to generate certificate for {}", new_id);
+        ports.insert(selected_port);
+        return false;
+    }
+
+    servers_id.push_back(entry);
+    if (!write_server_config_file(entry, control_port, server_ip, pem.first, trusted_server_certificate)) {
+        servers_id.pop_back();
+        ports.insert(selected_port);
+        return false;
+    }
+    save_all();
+    spdlog::info("create_user: user_id={} id={} client_port={}", user_id, new_id, selected_port);
+
+    out = entry;
+    return true;
+}
+
+bool DataServers::get_by_user_id(const std::string& user_id, Server_struct& out) const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (const auto& s : servers_id) {
+        if (s.user_id == user_id) {
+            out = s;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool DataServers::set_enabled(uint32_t id, bool enabled) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (auto& s : servers_id) {
+        if (s.id == id) {
+            if (s.enabled != enabled) {
+                s.enabled = enabled;
+                save_all(); // персистим сразу, чтобы переживать рестарт
+                spdlog::info("set_enabled: id={} -> {}", id, enabled);
+            }
+            return true;
+        }
+    }
+    spdlog::error("set_enabled: id {} not found", id);
+    return false;
+}
+
+bool DataServers::is_enabled(uint32_t id) const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (const auto& s : servers_id) {
+        if (s.id == id) {
+            return s.enabled;
+        }
+    }
+    return false;
+}
+
+size_t DataServers::count() const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    return servers_id.size();
+}
+

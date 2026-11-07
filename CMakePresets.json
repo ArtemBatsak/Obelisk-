@@ -1,0 +1,106 @@
+﻿{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "installDir": "${sourceDir}/out/install/${presetName}",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "BUILD_TESTING": "ON"
+      }
+    },
+    {
+      "name": "windows-base",
+      "hidden": true,
+      "inherits": "base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "win-debug",
+      "displayName": "Windows x64 Debug",
+      "inherits": "windows-base",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static",
+        "VCPKG_HOST_TRIPLET": "x64-windows-static",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDebug"
+      }
+    },
+    {
+      "name": "win-release",
+      "displayName": "Windows x64 Release (Static)",
+      "inherits": "windows-base",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static",
+        "VCPKG_HOST_TRIPLET": "x64-windows-static",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded"
+      }
+    },
+    {
+      "name": "linux-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "installDir": "${sourceDir}/out/install/${presetName}",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{HOME}/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "BUILD_TESTING": "ON"
+      },
+      "vendor": {
+        "microsoft.com/VisualStudioRemoteSettings/CMake/1.0": {
+          "sourceDir": "$env{HOME}/.vs/$ms{projectDirName}"
+        }
+      }
+    },
+    {
+      "name": "linux-debug",
+      "displayName": "Linux Debug",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux Release",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "build-win-debug",
+      "configurePreset": "win-debug"
+    },
+    {
+      "name": "build-win-release",
+      "configurePreset": "win-release"
+    },
+    {
+      "name": "build-linux-debug",
+      "configurePreset": "linux-debug"
+    },
+    {
+      "name": "build-linux-release",
+      "configurePreset": "linux-release"
+    }
+  ]
+}

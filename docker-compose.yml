@@ -1,0 +1,21 @@
+# Obelisk — удобный запуск одним контейнером (один узел, без балансировщика)
+# Управляется env из .env (скопируйте .env.example -> .env, задайте SERVICE_API_KEY и ADMIN_PASS).
+services:
+  obelisk:
+    build: .
+    container_name: obelisk
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # для контейнера слушаем все интерфейсы (управляем фаерволом снаружи)
+      - OBELISK_WEB_BIND=0.0.0.0
+    ports:
+      - "4455:4455"   # control
+      - "50021:50021" # data
+      - "8000:8000"   # web (админка/API) — оставьте в приватной сети/без публичного проброса
+      - "30000-39999:30000-39999" # пул портов сессий
+    volumes:
+      - obelisk_data:/etc/obelisk
+
+volumes:
+  obelisk_data:

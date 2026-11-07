@@ -1,0 +1,19 @@
+[Unit]
+Description=Obelisk TCP relay gateway (Kenny multiplay)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# EnvironmentFile — env-переменные (секреты) для управления узлом
+EnvironmentFile=-/etc/obelisk/obelisk.env
+ExecStart=/usr/local/bin/obelisk
+Restart=always
+RestartSec=2
+# Побольше файловых дескрипторов
+LimitNOFILE=65535
+# Красивое имя в логах
+SyslogIdentifier=obelisk
+
+[Install]
+WantedBy=multi-user.target
