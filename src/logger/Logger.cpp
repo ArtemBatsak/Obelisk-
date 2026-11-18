@@ -56,7 +56,7 @@ void init_logging()
     auto logger = std::make_shared<spdlog::logger>("obelisk", sinks.begin(), sinks.end());
     logger->set_level(level);
     logger->set_pattern("[%d.%m.%Y %H:%M:%S.%e] [%l] %v");
-    logger->flush_on(spdlog::level::info);
+    logger->flush_on(spdlog::level::warn);
 
     spdlog::set_default_logger(logger);
 

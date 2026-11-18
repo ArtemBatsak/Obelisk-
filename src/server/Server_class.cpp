@@ -420,7 +420,7 @@ void GrayServer::async_accept_client() {
                     asio::error_code ep_ec;
                     auto ep = sock->remote_endpoint(ep_ec);
                     self->clamp_mss(sock);
-                    spdlog::info("Server {}: client connected from {} (pending={}, data_ready={})",
+                    spdlog::debug("Server {}: client connected from {} (pending={}, data_ready={})",
                         self->id,
                         ep_ec ? std::string("?") : ep.address().to_string(),
                         self->client_pool.size() + 1,
@@ -495,7 +495,7 @@ void GrayServer::try_create_pair() {
     enable_keepalive(client_sock);
     enable_keepalive(data_sock);
 
-    spdlog::info("Server {}: pair established {} (active={})", id, pair->pair_id, link_pool.size());
+    spdlog::debug("Server {}: pair established {} (active={})", id, pair->pair_id, link_pool.size());
 
     splice_loop(client_sock, data_sock, pair, true);
     splice_loop(data_sock, client_sock, pair, false);
@@ -527,7 +527,7 @@ void GrayServer::splice_loop(
                             is_inbound ? "client->data" : "data->client", ec.message());
                     }
                     else {
-                        spdlog::info("Server {}: pair {} {} closed (eof)", self->id, pair->pair_id,
+                        spdlog::debug("Server {}: pair {} {} closed (eof)", self->id, pair->pair_id,
                             is_inbound ? "client->data" : "data->client");
                     }
                     asio::post(self->strand_, [self, id = pair->pair_id]() {
@@ -585,7 +585,7 @@ void GrayServer::remove_pair(const std::string& pair_id) {
         data_sock->close(ec);
     }
 
-    spdlog::info("Server {}: pair removed {} (active={}, in={}B out={}B)", id, pair_id, link_pool.size(), bytes_in, bytes_out);
+    spdlog::debug("Server {}: pair removed {} (active={}, in={}B out={}B)", id, pair_id, link_pool.size(), bytes_in, bytes_out);
 }
 
 void GrayServer::remove_all_pairs() {

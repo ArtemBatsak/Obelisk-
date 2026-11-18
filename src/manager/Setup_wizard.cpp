@@ -311,7 +311,7 @@ void ConfigManager::set_up() {
     if (config_.web_bind.empty()) config_.web_bind = "127.0.0.1";
     if (config_.service_api_key.empty()) {
         config_.service_api_key = generate_token_hex(24);
-        spdlog::warn("Generated service_api_key; save it: {}", config_.service_api_key);
+        spdlog::warn("Generated service_api_key; store it in the protected configuration file");
     }
     if (config_.max_sessions <= 0) config_.max_sessions = 500;
     if (!ensure_tls_material()) {
